@@ -1,0 +1,457 @@
+{
+  "name": "dotnet-debugger",
+  "displayName": ".NET Debugger (dotnet-debugger)",
+  "description": "Debug .NET applications with the open source dotnet-debugger DAP adapter.",
+  "version": "0.1.0",
+  "publisher": "dvislobokov",
+  "license": "MIT",
+  "icon": "icon.png",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/dvislobokov/dotnet-debugger.git"
+  },
+  "bugs": {
+    "url": "https://github.com/dvislobokov/dotnet-debugger/issues"
+  },
+  "homepage": "https://github.com/dvislobokov/dotnet-debugger#readme",
+  "keywords": [
+    "dotnet",
+    ".net",
+    "csharp",
+    "fsharp",
+    "debugger",
+    "coreclr",
+    "dap"
+  ],
+  "engines": {
+    "vscode": "^1.90.0"
+  },
+  "categories": [
+    "Debuggers"
+  ],
+  "main": "./out/extension.js",
+  "activationEvents": [
+    "onDebugResolve:dotnet-debugger",
+    "onDebugInitialConfigurations",
+    "workspaceContains:**/*.csproj",
+    "workspaceContains:**/*.fsproj",
+    "workspaceContains:**/*.vbproj"
+  ],
+  "scripts": {
+    "compile": "tsc -p .",
+    "watch": "tsc -w -p .",
+    "bundle-adapter": "node scripts/copy-adapter.js",
+    "test": "npm run compile && node out/test/runTest.js",
+    "package": "node scripts/package.js"
+  },
+  "devDependencies": {
+    "@types/mocha": "^10.0.10",
+    "@types/node": "^22.0.0",
+    "@types/vscode": "^1.90.0",
+    "@vscode/test-electron": "^2.5.2",
+    "@vscode/vsce": "^3.6.0",
+    "mocha": "^11.7.0",
+    "typescript": "^5.9.0"
+  },
+  "contributes": {
+    "commands": [
+      {
+        "command": "dotnet-debugger.debugProject",
+        "title": "Debug Project",
+        "category": ".NET Debugger",
+        "icon": "$(debug-alt)"
+      },
+      {
+        "command": "dotnet-debugger.debugProjectInTerminal",
+        "title": "Debug Project in Terminal",
+        "category": ".NET Debugger",
+        "icon": "$(terminal)"
+      },
+      {
+        "command": "dotnet-debugger.debugWithProfile",
+        "title": "Debug Project with Launch Profile...",
+        "category": ".NET Debugger"
+      },
+      {
+        "command": "dotnet-debugger.debugActiveFile",
+        "title": "Debug Project of Active File",
+        "category": ".NET Debugger",
+        "icon": "$(debug-alt)"
+      },
+      {
+        "command": "dotnet-debugger.debugStartupProject",
+        "title": "Debug Startup Project",
+        "category": ".NET Debugger"
+      },
+      {
+        "command": "dotnet-debugger.selectStartupProject",
+        "title": "Set as Startup Project",
+        "category": ".NET Debugger"
+      },
+      {
+        "command": "dotnet-debugger.attachToProcess",
+        "title": "Attach to Process...",
+        "category": ".NET Debugger"
+      },
+      {
+        "command": "dotnet-debugger.pickProcess",
+        "title": "Pick Process",
+        "category": ".NET Debugger"
+      },
+      {
+        "command": "dotnet-debugger.freezeThread",
+        "title": "Freeze Thread",
+        "category": ".NET Debugger"
+      },
+      {
+        "command": "dotnet-debugger.thawThread",
+        "title": "Thaw Thread",
+        "category": ".NET Debugger"
+      },
+      {
+        "command": "dotnet-debugger.openLogs",
+        "title": "Open Adapter Logs (enables tracing)",
+        "category": ".NET Debugger"
+      },
+      {
+        "command": "dotnet-debugger.collectDiagnostics",
+        "title": "Collect Diagnostics (for bug reports)",
+        "category": ".NET Debugger"
+      }
+    ],
+    "configuration": {
+      "title": ".NET Debugger",
+      "properties": {
+        "dotnet-debugger.adapterPath": {
+          "type": "string",
+          "default": "",
+          "description": "Path to the dotnet-debugger executable (or dotnet-debugger.dll). Empty: use the adapter bundled with the extension."
+        },
+        "dotnet-debugger.trace": {
+          "type": "boolean",
+          "default": false,
+          "description": "Write a protocol and engine trace into the extension's log directory."
+        }
+      }
+    },
+    "breakpoints": [
+      {
+        "language": "csharp"
+      },
+      {
+        "language": "fsharp"
+      },
+      {
+        "language": "vb"
+      },
+      {
+        "language": "razor"
+      },
+      {
+        "language": "aspnetcorerazor"
+      }
+    ],
+    "debuggers": [
+      {
+        "type": "dotnet-debugger",
+        "label": ".NET (dotnet-debugger)",
+        "languages": [
+          "csharp",
+          "fsharp",
+          "vb"
+        ],
+        "variables": {
+          "pickProcess": "dotnet-debugger.pickProcess"
+        },
+        "configurationAttributes": {
+          "launch": {
+            "properties": {
+              "project": {
+                "type": "string",
+                "description": "Project file (or its directory) to debug. Its output assembly is located with MSBuild and Properties/launchSettings.json is applied.",
+                "default": "${workspaceFolder}"
+              },
+              "program": {
+                "type": "string",
+                "description": "Path to the application dll or executable. Alternative to \"project\"."
+              },
+              "build": {
+                "type": "boolean",
+                "description": "Run \"dotnet build\" on the project before launching.",
+                "default": true
+              },
+              "configuration": {
+                "type": "string",
+                "description": "Build configuration used to build and to locate the output of \"project\".",
+                "default": "Debug"
+              },
+              "args": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                },
+                "description": "Command line arguments. Overrides commandLineArgs of the launch profile.",
+                "default": []
+              },
+              "cwd": {
+                "type": "string",
+                "description": "Working directory. Defaults to the launch profile's workingDirectory, then to the project (or program) directory."
+              },
+              "env": {
+                "type": "object",
+                "additionalProperties": {
+                  "type": [
+                    "string",
+                    "null"
+                  ]
+                },
+                "description": "Environment variables (null removes a variable). Applied on top of the launch profile.",
+                "default": {}
+              },
+              "launchSettingsProfile": {
+                "type": "string",
+                "description": "Profile of launchSettings.json to apply. Omit for the first profile with commandName \"Project\"; empty string to ignore launchSettings.json."
+              },
+              "launchSettingsFilePath": {
+                "type": "string",
+                "description": "Path of launchSettings.json. Defaults to Properties/launchSettings.json next to the project."
+              },
+              "console": {
+                "type": "string",
+                "enum": [
+                  "internalConsole",
+                  "integratedTerminal",
+                  "externalTerminal"
+                ],
+                "enumDescriptions": [
+                  "Output goes to the Debug Console. The application cannot read input.",
+                  "Run in VS Code's integrated terminal (needed for Console.ReadLine).",
+                  "Run in an external terminal window."
+                ],
+                "default": "internalConsole"
+              },
+              "stopAtEntry": {
+                "type": "boolean",
+                "description": "Stop at the first line of Main.",
+                "default": false
+              },
+              "justMyCode": {
+                "type": "boolean",
+                "description": "Skip and hide code without symbols.",
+                "default": true
+              },
+              "enableStepFiltering": {
+                "type": "boolean",
+                "description": "Step over properties and operators when stepping in.",
+                "default": true
+              },
+              "sourceFileMap": {
+                "type": "object",
+                "additionalProperties": {
+                  "type": "string"
+                },
+                "description": "Maps source paths recorded in the symbols to local directories, e.g. { \"/_/\": \"${workspaceFolder}\" } for builds made in CI or in a container.",
+                "default": {}
+              },
+              "symbolOptions": {
+                "type": "object",
+                "description": "Where to find symbols (PDBs) that are not next to their module.",
+                "properties": {
+                  "searchPaths": {
+                    "type": "array",
+                    "items": {
+                      "type": "string"
+                    },
+                    "description": "Directories (flat or symbol store layout) and http(s) symbol servers."
+                  },
+                  "cachePath": {
+                    "type": "string",
+                    "description": "Directory for downloaded symbols."
+                  },
+                  "searchMicrosoftSymbolServer": {
+                    "type": "boolean",
+                    "default": false
+                  },
+                  "searchNuGetOrgSymbolServer": {
+                    "type": "boolean",
+                    "default": false
+                  }
+                }
+              },
+              "suppressJitOptimizations": {
+                "type": "boolean",
+                "description": "Run without precompiled (ReadyToRun) code. Defaults to true when the program itself was published ReadyToRun."
+              }
+            }
+          },
+          "attach": {
+            "required": [
+              "processId"
+            ],
+            "properties": {
+              "processId": {
+                "type": [
+                  "string",
+                  "integer"
+                ],
+                "description": "Id of the process to attach to. Use \"${command:pickProcess}\" to choose from a list.",
+                "default": "${command:pickProcess}"
+              },
+              "justMyCode": {
+                "type": "boolean",
+                "default": true
+              },
+              "sourceFileMap": {
+                "type": "object",
+                "additionalProperties": {
+                  "type": "string"
+                },
+                "description": "Maps source paths recorded in the symbols to local directories, e.g. { \"/_/\": \"${workspaceFolder}\" } for builds made in CI or in a container.",
+                "default": {}
+              }
+            }
+          }
+        },
+        "initialConfigurations": [
+          {
+            "name": ".NET: Launch project",
+            "type": "dotnet-debugger",
+            "request": "launch",
+            "project": "${workspaceFolder}",
+            "build": true
+          },
+          {
+            "name": ".NET: Attach",
+            "type": "dotnet-debugger",
+            "request": "attach",
+            "processId": "${command:pickProcess}"
+          }
+        ],
+        "configurationSnippets": [
+          {
+            "label": ".NET (dotnet-debugger): Launch project",
+            "description": "Build and debug a project",
+            "body": {
+              "name": ".NET: Launch ${1:project}",
+              "type": "dotnet-debugger",
+              "request": "launch",
+              "project": "^\"\\${workspaceFolder}/${2:src/App/App.csproj}\"",
+              "build": true
+            }
+          },
+          {
+            "label": ".NET (dotnet-debugger): Launch console app in terminal",
+            "description": "Debug an application that reads from the console",
+            "body": {
+              "name": ".NET: Launch in terminal",
+              "type": "dotnet-debugger",
+              "request": "launch",
+              "project": "^\"\\${workspaceFolder}\"",
+              "build": true,
+              "console": "integratedTerminal"
+            }
+          },
+          {
+            "label": ".NET (dotnet-debugger): Launch dll",
+            "description": "Debug an already built assembly",
+            "body": {
+              "name": ".NET: Launch dll",
+              "type": "dotnet-debugger",
+              "request": "launch",
+              "program": "^\"\\${workspaceFolder}/bin/Debug/${1:net9.0}/${2:App}.dll\"",
+              "args": [],
+              "cwd": "^\"\\${workspaceFolder}\""
+            }
+          },
+          {
+            "label": ".NET (dotnet-debugger): Attach",
+            "description": "Attach to a running .NET process",
+            "body": {
+              "name": ".NET: Attach",
+              "type": "dotnet-debugger",
+              "request": "attach",
+              "processId": "^\"\\${command:pickProcess}\""
+            }
+          }
+        ]
+      }
+    ],
+    "menus": {
+      "explorer/context": [
+        {
+          "command": "dotnet-debugger.debugProject",
+          "when": "resourceExtname == .csproj || resourceExtname == .fsproj || resourceExtname == .vbproj",
+          "group": "1_dotnetdebug@1"
+        },
+        {
+          "command": "dotnet-debugger.debugProjectInTerminal",
+          "when": "resourceExtname == .csproj || resourceExtname == .fsproj || resourceExtname == .vbproj",
+          "group": "1_dotnetdebug@2"
+        },
+        {
+          "command": "dotnet-debugger.debugWithProfile",
+          "when": "resourceExtname == .csproj || resourceExtname == .fsproj || resourceExtname == .vbproj",
+          "group": "1_dotnetdebug@3"
+        },
+        {
+          "command": "dotnet-debugger.selectStartupProject",
+          "when": "resourceExtname == .csproj || resourceExtname == .fsproj || resourceExtname == .vbproj",
+          "group": "1_dotnetdebug@4"
+        }
+      ],
+      "editor/title/run": [
+        {
+          "command": "dotnet-debugger.debugActiveFile",
+          "when": "resourceLangId == csharp || resourceLangId == fsharp || resourceLangId == vb",
+          "group": "1_dotnetdebug@1"
+        },
+        {
+          "command": "dotnet-debugger.debugProjectInTerminal",
+          "when": "resourceLangId == csharp || resourceLangId == fsharp || resourceLangId == vb",
+          "group": "1_dotnetdebug@2"
+        }
+      ],
+      "editor/title/context": [
+        {
+          "command": "dotnet-debugger.debugProject",
+          "when": "resourceExtname == .csproj || resourceExtname == .fsproj || resourceExtname == .vbproj",
+          "group": "1_dotnetdebug@1"
+        }
+      ],
+      "commandPalette": [
+        {
+          "command": "dotnet-debugger.pickProcess",
+          "when": "false"
+        },
+        {
+          "command": "dotnet-debugger.freezeThread",
+          "when": "false"
+        },
+        {
+          "command": "dotnet-debugger.thawThread",
+          "when": "false"
+        }
+      ],
+      "debug/callstack/context": [
+        {
+          "command": "dotnet-debugger.freezeThread",
+          "when": "inDebugMode && debugType == 'dotnet-debugger' && callStackItemType == 'thread'",
+          "group": "dotnetdebug@1"
+        },
+        {
+          "command": "dotnet-debugger.thawThread",
+          "when": "inDebugMode && debugType == 'dotnet-debugger' && callStackItemType == 'thread'",
+          "group": "dotnetdebug@2"
+        }
+      ]
+    },
+    "keybindings": [
+      {
+        "command": "dotnet-debugger.debugStartupProject",
+        "key": "ctrl+alt+f5",
+        "mac": "cmd+alt+f5",
+        "when": "!inDebugMode"
+      }
+    ]
+  }
+}

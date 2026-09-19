@@ -1,0 +1,17 @@
+# Text is normalized in the repository and checked out with the platform's line endings.
+* text=auto
+
+*.cs     text diff=csharp
+*.csproj text
+*.props  text
+*.sln    text eol=crlf
+*.sh     text eol=lf
+*.ps1    text
+*.ts     text
+*.json   text
+*.yml    text
+*.md     text
+
+*.png    binary
+*.vsix   binary
+*.nupkg  binary

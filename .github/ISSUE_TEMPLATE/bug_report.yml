@@ -1,0 +1,34 @@
+name: Bug report
+description: Something does not work while debugging
+labels: [bug]
+body:
+  - type: textarea
+    id: what
+    attributes:
+      label: What happened, and what did you expect?
+    validations:
+      required: true
+  - type: textarea
+    id: repro
+    attributes:
+      label: How to reproduce
+      description: The smallest program and the steps (breakpoint here, step there) that show the problem.
+    validations:
+      required: true
+  - type: textarea
+    id: diagnostics
+    attributes:
+      label: Diagnostics
+      description: >
+        In VS Code run ".NET Debugger: Collect Diagnostics" and paste the result. With other clients: the output of
+        "dotnet-debugger --version" and "dotnet --info", the client and its version.
+      render: text
+    validations:
+      required: true
+  - type: textarea
+    id: trace
+    attributes:
+      label: Adapter trace
+      description: >
+        Start the adapter with --log=FILE (VS Code: ".NET Debugger: Open Adapter Logs" turns tracing on), reproduce and
+        attach the file. It contains paths, variable names and values of your program: review it before posting.

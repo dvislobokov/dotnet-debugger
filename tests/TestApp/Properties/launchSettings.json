@@ -1,0 +1,24 @@
+{
+  // Used by the launchSettings.json tests of the debugger (comments and trailing commas must be tolerated).
+  "profiles": {
+    "IIS Express": {
+      "commandName": "IISExpress",
+      "environmentVariables": { "DBG_TEST": "wrong-profile" },
+    },
+    "Default": {
+      "commandName": "Project",
+      "commandLineArgs": "env \"from default profile\"",
+      "environmentVariables": { "DBG_TEST": "default-env" },
+    },
+    "TestProfile": {
+      "commandName": "Project",
+      "commandLineArgs": "env fromProfile",
+      "workingDirectory": "Properties",
+      "applicationUrl": "http://localhost:5123",
+      "environmentVariables": {
+        "DBG_TEST": "profile-env",
+        "DBG_SECOND": "second",
+      },
+    },
+  },
+}

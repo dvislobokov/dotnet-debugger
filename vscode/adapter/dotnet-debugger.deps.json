@@ -1,0 +1,332 @@
+{
+  "runtimeTarget": {
+    "name": ".NETCoreApp,Version=v9.0/win-x64",
+    "signature": ""
+  },
+  "compilationOptions": {},
+  "targets": {
+    ".NETCoreApp,Version=v9.0": {},
+    ".NETCoreApp,Version=v9.0/win-x64": {
+      "dotnet-debugger/1.0.0": {
+        "dependencies": {
+          "DotnetDebugger.Engine": "1.0.0",
+          "DotnetDebugger.Protocol": "1.0.0"
+        },
+        "runtime": {
+          "dotnet-debugger.dll": {}
+        }
+      },
+      "ClrDebug/0.4.2": {
+        "runtime": {
+          "lib/net8.0/ClrDebug.dll": {
+            "assemblyVersion": "0.4.0.0",
+            "fileVersion": "0.4.2.0"
+          }
+        }
+      },
+      "Microsoft.CodeAnalysis.Analyzers/5.9.0-1.26328.17": {},
+      "Microsoft.CodeAnalysis.Common/5.9.0": {
+        "dependencies": {
+          "Microsoft.CodeAnalysis.Analyzers": "5.9.0-1.26328.17",
+          "System.Buffers": "4.6.1",
+          "System.Collections.Immutable": "10.0.1",
+          "System.Memory": "4.6.3",
+          "System.Numerics.Vectors": "4.6.1",
+          "System.Reflection.Metadata": "10.0.1",
+          "System.Runtime.CompilerServices.Unsafe": "6.1.2",
+          "System.Text.Encoding.CodePages": "8.0.0",
+          "System.Threading.Tasks.Extensions": "4.6.3"
+        },
+        "runtime": {
+          "lib/netstandard2.0/Microsoft.CodeAnalysis.dll": {
+            "assemblyVersion": "5.9.0.0",
+            "fileVersion": "5.900.26.35703"
+          }
+        }
+      },
+      "Microsoft.CodeAnalysis.CSharp/5.9.0": {
+        "dependencies": {
+          "Microsoft.CodeAnalysis.Analyzers": "5.9.0-1.26328.17",
+          "Microsoft.CodeAnalysis.Common": "5.9.0",
+          "System.Buffers": "4.6.1",
+          "System.Collections.Immutable": "10.0.1",
+          "System.Memory": "4.6.3",
+          "System.Numerics.Vectors": "4.6.1",
+          "System.Reflection.Metadata": "10.0.1",
+          "System.Runtime.CompilerServices.Unsafe": "6.1.2",
+          "System.Text.Encoding.CodePages": "8.0.0",
+          "System.Threading.Tasks.Extensions": "4.6.3"
+        },
+        "runtime": {
+          "lib/netstandard2.0/Microsoft.CodeAnalysis.CSharp.dll": {
+            "assemblyVersion": "5.9.0.0",
+            "fileVersion": "5.900.26.35703"
+          }
+        }
+      },
+      "Microsoft.Diagnostics.DbgShim/10.0.745401": {
+        "dependencies": {
+          "Microsoft.Diagnostics.DbgShim.linux-arm": "10.0.745401",
+          "Microsoft.Diagnostics.DbgShim.linux-arm64": "10.0.745401",
+          "Microsoft.Diagnostics.DbgShim.linux-musl-arm": "10.0.745401",
+          "Microsoft.Diagnostics.DbgShim.linux-musl-arm64": "10.0.745401",
+          "Microsoft.Diagnostics.DbgShim.linux-musl-x64": "10.0.745401",
+          "Microsoft.Diagnostics.DbgShim.linux-x64": "10.0.745401",
+          "Microsoft.Diagnostics.DbgShim.osx-arm64": "10.0.745401",
+          "Microsoft.Diagnostics.DbgShim.osx-x64": "10.0.745401",
+          "Microsoft.Diagnostics.DbgShim.win-arm64": "10.0.745401",
+          "Microsoft.Diagnostics.DbgShim.win-x64": "10.0.745401",
+          "Microsoft.Diagnostics.DbgShim.win-x86": "10.0.745401"
+        }
+      },
+      "Microsoft.Diagnostics.DbgShim.linux-arm/10.0.745401": {},
+      "Microsoft.Diagnostics.DbgShim.linux-arm64/10.0.745401": {},
+      "Microsoft.Diagnostics.DbgShim.linux-musl-arm/10.0.745401": {},
+      "Microsoft.Diagnostics.DbgShim.linux-musl-arm64/10.0.745401": {},
+      "Microsoft.Diagnostics.DbgShim.linux-musl-x64/10.0.745401": {},
+      "Microsoft.Diagnostics.DbgShim.linux-x64/10.0.745401": {},
+      "Microsoft.Diagnostics.DbgShim.osx-arm64/10.0.745401": {},
+      "Microsoft.Diagnostics.DbgShim.osx-x64/10.0.745401": {},
+      "Microsoft.Diagnostics.DbgShim.win-arm64/10.0.745401": {},
+      "Microsoft.Diagnostics.DbgShim.win-x64/10.0.745401": {
+        "native": {
+          "runtimes/win-x64/native/dbgshim.dll": {
+            "fileVersion": "10.0.14.45401"
+          }
+        }
+      },
+      "Microsoft.Diagnostics.DbgShim.win-x86/10.0.745401": {},
+      "System.Buffers/4.6.1": {},
+      "System.Collections.Immutable/10.0.1": {
+        "runtime": {
+          "lib/net9.0/System.Collections.Immutable.dll": {
+            "assemblyVersion": "10.0.0.0",
+            "fileVersion": "10.0.125.57005"
+          }
+        }
+      },
+      "System.Memory/4.6.3": {},
+      "System.Numerics.Vectors/4.6.1": {},
+      "System.Reflection.Metadata/10.0.1": {
+        "dependencies": {
+          "System.Collections.Immutable": "10.0.1"
+        },
+        "runtime": {
+          "lib/net9.0/System.Reflection.Metadata.dll": {
+            "assemblyVersion": "10.0.0.0",
+            "fileVersion": "10.0.125.57005"
+          }
+        }
+      },
+      "System.Runtime.CompilerServices.Unsafe/6.1.2": {},
+      "System.Text.Encoding.CodePages/8.0.0": {},
+      "System.Threading.Tasks.Extensions/4.6.3": {},
+      "DotnetDebugger.Engine/1.0.0": {
+        "dependencies": {
+          "ClrDebug": "0.4.2",
+          "Microsoft.CodeAnalysis.CSharp": "5.9.0",
+          "Microsoft.Diagnostics.DbgShim": "10.0.745401"
+        },
+        "runtime": {
+          "DotnetDebugger.Engine.dll": {
+            "assemblyVersion": "1.0.0.0",
+            "fileVersion": "1.0.0.0"
+          }
+        }
+      },
+      "DotnetDebugger.Protocol/1.0.0": {
+        "runtime": {
+          "DotnetDebugger.Protocol.dll": {
+            "assemblyVersion": "1.0.0.0",
+            "fileVersion": "1.0.0.0"
+          }
+        }
+      }
+    }
+  },
+  "libraries": {
+    "dotnet-debugger/1.0.0": {
+      "type": "project",
+      "serviceable": false,
+      "sha512": ""
+    },
+    "ClrDebug/0.4.2": {
+      "type": "package",
+      "serviceable": true,
+      "sha512": "sha512-zk64ZJBg+B3afayxuAqnoBaq5IL/SSLL080D/mhxBvhTNFAXFPotkMICUjJikGNaL+qYxU7Em/lzY9otRPIiPA==",
+      "path": "clrdebug/0.4.2",
+      "hashPath": "clrdebug.0.4.2.nupkg.sha512"
+    },
+    "Microsoft.CodeAnalysis.Analyzers/5.9.0-1.26328.17": {
+      "type": "package",
+      "serviceable": true,
+      "sha512": "sha512-HP9NNk8ZjOSI2hgOyXnQg+kv7/X837Vr2nAlXiGAtqtYnYKjRRa1UmQFr8KFs5ynGYKqfbb8zB9APoWjiAGdMg==",
+      "path": "microsoft.codeanalysis.analyzers/5.9.0-1.26328.17",
+      "hashPath": "microsoft.codeanalysis.analyzers.5.9.0-1.26328.17.nupkg.sha512"
+    },
+    "Microsoft.CodeAnalysis.Common/5.9.0": {
+      "type": "package",
+      "serviceable": true,
+      "sha512": "sha512-IYaIaUWdIx539AReKZOBEqTskFusZfCh/wFSPilDvCn5Say8MegLw2LONcSIcVy+v3Gzv53qYBspgvBGSErfbQ==",
+      "path": "microsoft.codeanalysis.common/5.9.0",
+      "hashPath": "microsoft.codeanalysis.common.5.9.0.nupkg.sha512"
+    },
+    "Microsoft.CodeAnalysis.CSharp/5.9.0": {
+      "type": "package",
+      "serviceable": true,
+      "sha512": "sha512-7JGDA0UT1+h7k9ZcA3rF4eFC8+QPq1xyYaXxag4p8r/zzPurEJxvdi7aM+MRL/SfP7XADXpWF/pl/eUYXOq/ww==",
+      "path": "microsoft.codeanalysis.csharp/5.9.0",
+      "hashPath": "microsoft.codeanalysis.csharp.5.9.0.nupkg.sha512"
+    },
+    "Microsoft.Diagnostics.DbgShim/10.0.745401": {
+      "type": "package",
+      "serviceable": true,
+      "sha512": "sha512-Q6lZGwAdYWb8HO64/6sqimksJPwMtZaPDOji3BWfwUQe/2fyIDiT4KBzX65Mj+oRWYRNkvK8A9LQPsDlB9YCvw==",
+      "path": "microsoft.diagnostics.dbgshim/10.0.745401",
+      "hashPath": "microsoft.diagnostics.dbgshim.10.0.745401.nupkg.sha512"
+    },
+    "Microsoft.Diagnostics.DbgShim.linux-arm/10.0.745401": {
+      "type": "package",
+      "serviceable": true,
+      "sha512": "sha512-3LfuEsirccbApI94sOpiqX8DKpfQnEIzMt5S/6Ac/0vU5f1NrhCX1VV1Dx/IwN6GxPp0VKlZYOUypRYecrtgRg==",
+      "path": "microsoft.diagnostics.dbgshim.linux-arm/10.0.745401",
+      "hashPath": "microsoft.diagnostics.dbgshim.linux-arm.10.0.745401.nupkg.sha512"
+    },
+    "Microsoft.Diagnostics.DbgShim.linux-arm64/10.0.745401": {
+      "type": "package",
+      "serviceable": true,
+      "sha512": "sha512-g9SM6887S79iyl2YvMIkP9RPqb/6m2MInhiBEBcuBNPEFgKSiNoDQrwXNzECmyq99dMgtsLC/OtUYz4LtbdhUQ==",
+      "path": "microsoft.diagnostics.dbgshim.linux-arm64/10.0.745401",
+      "hashPath": "microsoft.diagnostics.dbgshim.linux-arm64.10.0.745401.nupkg.sha512"
+    },
+    "Microsoft.Diagnostics.DbgShim.linux-musl-arm/10.0.745401": {
+      "type": "package",
+      "serviceable": true,
+      "sha512": "sha512-hUuecI/LjVNqkuuvy40Ym/JiOStGX129aDtdD97VhgVJ6/pF6RhbmpSQdVVTpQcjC8SKjWqJxKl7vaf05yAq0g==",
+      "path": "microsoft.diagnostics.dbgshim.linux-musl-arm/10.0.745401",
+      "hashPath": "microsoft.diagnostics.dbgshim.linux-musl-arm.10.0.745401.nupkg.sha512"
+    },
+    "Microsoft.Diagnostics.DbgShim.linux-musl-arm64/10.0.745401": {
+      "type": "package",
+      "serviceable": true,
+      "sha512": "sha512-UmquN5IHZ2LbVL/wKGEEOj1x6pm+QU/oQAdTrJZutnNHHc89TpGkJXLvR05MZZKA20XRY7JuZDeEHf0KkiswWQ==",
+      "path": "microsoft.diagnostics.dbgshim.linux-musl-arm64/10.0.745401",
+      "hashPath": "microsoft.diagnostics.dbgshim.linux-musl-arm64.10.0.745401.nupkg.sha512"
+    },
+    "Microsoft.Diagnostics.DbgShim.linux-musl-x64/10.0.745401": {
+      "type": "package",
+      "serviceable": true,
+      "sha512": "sha512-ky7FcOgxeklTmL0/+igUEDM/nwSmBF7hiThR+laOtkNNPpbce7t2S44zdLlpfQtluMGszS8/t8NbONXX8FY9oQ==",
+      "path": "microsoft.diagnostics.dbgshim.linux-musl-x64/10.0.745401",
+      "hashPath": "microsoft.diagnostics.dbgshim.linux-musl-x64.10.0.745401.nupkg.sha512"
+    },
+    "Microsoft.Diagnostics.DbgShim.linux-x64/10.0.745401": {
+      "type": "package",
+      "serviceable": true,
+      "sha512": "sha512-aKQ3tHaEenVd6NSvevh94VmTXcfdu/MTfHuGpHIZmeaPtFnLY9UodJ0UtR1FRaJTMPFRjjpDQ/zrCxfNu34D/w==",
+      "path": "microsoft.diagnostics.dbgshim.linux-x64/10.0.745401",
+      "hashPath": "microsoft.diagnostics.dbgshim.linux-x64.10.0.745401.nupkg.sha512"
+    },
+    "Microsoft.Diagnostics.DbgShim.osx-arm64/10.0.745401": {
+      "type": "package",
+      "serviceable": true,
+      "sha512": "sha512-8ValHHfcRr23M/ZkBC/z0fNd0GCClGmQ1U7eeZNmLKG+84rjiwZ3IvSSKbeAxj0nnFqUo9QpJoQYBnvXTNFNDw==",
+      "path": "microsoft.diagnostics.dbgshim.osx-arm64/10.0.745401",
+      "hashPath": "microsoft.diagnostics.dbgshim.osx-arm64.10.0.745401.nupkg.sha512"
+    },
+    "Microsoft.Diagnostics.DbgShim.osx-x64/10.0.745401": {
+      "type": "package",
+      "serviceable": true,
+      "sha512": "sha512-5W0TVYDQWCfVOtOvj541nm+ox7XYycrYTiEbbBK3pJ3Cfw+BQLoaUk1N6cxxI5woJp2lUQNKdaUidZM7/WI6+Q==",
+      "path": "microsoft.diagnostics.dbgshim.osx-x64/10.0.745401",
+      "hashPath": "microsoft.diagnostics.dbgshim.osx-x64.10.0.745401.nupkg.sha512"
+    },
+    "Microsoft.Diagnostics.DbgShim.win-arm64/10.0.745401": {
+      "type": "package",
+      "serviceable": true,
+      "sha512": "sha512-moGm89fmdD6wNfo+mawNkim5/yypNklu6IOO0ZrDWOHBanU1Vf13L15n+ae3QmCP5bmVOD5ojz9dTBFQ2NLZ5A==",
+      "path": "microsoft.diagnostics.dbgshim.win-arm64/10.0.745401",
+      "hashPath": "microsoft.diagnostics.dbgshim.win-arm64.10.0.745401.nupkg.sha512"
+    },
+    "Microsoft.Diagnostics.DbgShim.win-x64/10.0.745401": {
+      "type": "package",
+      "serviceable": true,
+      "sha512": "sha512-xYkj0sAIdigKYYu7+l1QsYXyR+SjvZ3v3RVdAzjBh+skagWSBKVZyZCaPXvs3nOUQYisFMHireoTP5YOGbNERA==",
+      "path": "microsoft.diagnostics.dbgshim.win-x64/10.0.745401",
+      "hashPath": "microsoft.diagnostics.dbgshim.win-x64.10.0.745401.nupkg.sha512"
+    },
+    "Microsoft.Diagnostics.DbgShim.win-x86/10.0.745401": {
+      "type": "package",
+      "serviceable": true,
+      "sha512": "sha512-ebfxo92/Ee/EjqUBT+PRfCgKmeAEP+piJowvsSFT6CW6kk0OLDN10/h+dTFeRPN66TgWRpcghTTtg59u6TndDQ==",
+      "path": "microsoft.diagnostics.dbgshim.win-x86/10.0.745401",
+      "hashPath": "microsoft.diagnostics.dbgshim.win-x86.10.0.745401.nupkg.sha512"
+    },
+    "System.Buffers/4.6.1": {
+      "type": "package",
+      "serviceable": true,
+      "sha512": "sha512-N8GXpmiLMtljq7gwvyS+1QvKT/W2J8sNAvx+HVg4NGmsG/H+2k/y9QI23auLJRterrzCiDH+IWAw4V/GPwsMlw==",
+      "path": "system.buffers/4.6.1",
+      "hashPath": "system.buffers.4.6.1.nupkg.sha512"
+    },
+    "System.Collections.Immutable/10.0.1": {
+      "type": "package",
+      "serviceable": true,
+      "sha512": "sha512-kdTe61B8P7i2M1pODC3MLbZ/CfFGjpC6c6jzxjQoB5DHZNewayCRqgFUmx3JKB6vLQtozpMQEiw+R5fO32Jv4g==",
+      "path": "system.collections.immutable/10.0.1",
+      "hashPath": "system.collections.immutable.10.0.1.nupkg.sha512"
+    },
+    "System.Memory/4.6.3": {
+      "type": "package",
+      "serviceable": true,
+      "sha512": "sha512-qdcDOgnFZY40+Q9876JUHnlHu7bosOHX8XISRoH94fwk6hgaeQGSgfZd8srWRZNt5bV9ZW2TljcegDNxsf+96A==",
+      "path": "system.memory/4.6.3",
+      "hashPath": "system.memory.4.6.3.nupkg.sha512"
+    },
+    "System.Numerics.Vectors/4.6.1": {
+      "type": "package",
+      "serviceable": true,
+      "sha512": "sha512-sQxefTnhagrhoq2ReR0D/6K0zJcr9Hrd6kikeXsA1I8kOCboTavcUC4r7TSfpKFeE163uMuxZcyfO1mGO3EN8Q==",
+      "path": "system.numerics.vectors/4.6.1",
+      "hashPath": "system.numerics.vectors.4.6.1.nupkg.sha512"
+    },
+    "System.Reflection.Metadata/10.0.1": {
+      "type": "package",
+      "serviceable": true,
+      "sha512": "sha512-zpcfT/wacPPhE17zcudozlxQtWN/84qyiMyZNGLnK4cj2IMBtLsZYwYjVnALUhPliwyUVj/P7kaZvBWYBCnf2Q==",
+      "path": "system.reflection.metadata/10.0.1",
+      "hashPath": "system.reflection.metadata.10.0.1.nupkg.sha512"
+    },
+    "System.Runtime.CompilerServices.Unsafe/6.1.2": {
+      "type": "package",
+      "serviceable": true,
+      "sha512": "sha512-2hBr6zdbIBTDE3EhK7NSVNdX58uTK6iHW/P/Axmm9sl1xoGSLqDvMtpecn226TNwHByFokYwJmt/aQQNlO5CRw==",
+      "path": "system.runtime.compilerservices.unsafe/6.1.2",
+      "hashPath": "system.runtime.compilerservices.unsafe.6.1.2.nupkg.sha512"
+    },
+    "System.Text.Encoding.CodePages/8.0.0": {
+      "type": "package",
+      "serviceable": true,
+      "sha512": "sha512-OZIsVplFGaVY90G2SbpgU7EnCoOO5pw1t4ic21dBF3/1omrJFpAGoNAVpPyMVOC90/hvgkGG3VFqR13YgZMQfg==",
+      "path": "system.text.encoding.codepages/8.0.0",
+      "hashPath": "system.text.encoding.codepages.8.0.0.nupkg.sha512"
+    },
+    "System.Threading.Tasks.Extensions/4.6.3": {
+      "type": "package",
+      "serviceable": true,
+      "sha512": "sha512-7sCiwilJLYbTZELaKnc7RecBBXWXA+xMLQWZKWawBxYjp6DBlSE3v9/UcvKBvr1vv2tTOhipiogM8rRmxlhrVA==",
+      "path": "system.threading.tasks.extensions/4.6.3",
+      "hashPath": "system.threading.tasks.extensions.4.6.3.nupkg.sha512"
+    },
+    "DotnetDebugger.Engine/1.0.0": {
+      "type": "project",
+      "serviceable": false,
+      "sha512": ""
+    },
+    "DotnetDebugger.Protocol/1.0.0": {
+      "type": "project",
+      "serviceable": false,
+      "sha512": ""
+    }
+  }
+}

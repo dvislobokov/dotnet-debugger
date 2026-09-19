@@ -1,0 +1,130 @@
+name: Release
+
+# Push a tag "v1.2.3" (or "v1.2.3-beta.1"): the version comes from the tag.
+on:
+  push:
+    tags: ['v*']
+
+permissions:
+  contents: write
+
+env:
+  DOTNET_NOLOGO: 1
+  DOTNET_CLI_TELEMETRY_OPTOUT: 1
+
+jobs:
+  build:
+    name: Build ${{ matrix.rid }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { os: windows-latest, rid: win-x64 }
+          - { os: windows-latest, rid: win-arm64 }
+          - { os: ubuntu-latest, rid: linux-x64 }
+          - { os: ubuntu-latest, rid: linux-arm64 }
+          - { os: ubuntu-latest, rid: linux-musl-x64 }
+          - { os: macos-latest, rid: osx-arm64 }
+          - { os: macos-latest, rid: osx-x64 }
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: 9.0.x
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - name: Version from tag
+        shell: pwsh
+        run: ./build/set-version.ps1 -Version ("${{ github.ref_name }}".TrimStart('v'))
+
+      - name: Publish the adapter
+        shell: pwsh
+        run: ./build/publish.ps1 -Rid ${{ matrix.rid }}
+
+      - name: Archive
+        shell: pwsh
+        run: |
+          $name = "dotnet-debugger-${{ github.ref_name }}-${{ matrix.rid }}"
+          New-Item -ItemType Directory -Force artifacts/release | Out-Null
+          if ("${{ matrix.rid }}".StartsWith("win")) {
+            Compress-Archive -Path "artifacts/publish/${{ matrix.rid }}/*" -DestinationPath "artifacts/release/$name.zip"
+          } else {
+            tar -czf "artifacts/release/$name.tar.gz" -C "artifacts/publish/${{ matrix.rid }}" .
+          }
+
+      - name: Platform specific .vsix
+        working-directory: vscode
+        run: |
+          npm ci
+          npm run package -- ${{ matrix.rid }}
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: release-${{ matrix.rid }}
+          path: |
+            artifacts/release/*
+            vscode/*.vsix
+
+  tool:
+    name: .NET tool package
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: 9.0.x
+      - name: Version from tag
+        shell: pwsh
+        run: ./build/set-version.ps1 -Version ("${{ github.ref_name }}".TrimStart('v'))
+      - run: dotnet pack src/DotnetDebugger.Adapter -c Release
+      - uses: actions/upload-artifact@v4
+        with:
+          name: release-tool
+          path: artifacts/packages/*.nupkg
+
+  publish:
+    name: Publish
+    needs: [build, tool]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: release-*
+          path: dist
+          merge-multiple: true
+
+      - name: GitHub release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          files=$(find dist -type f \( -name "*.zip" -o -name "*.tar.gz" -o -name "*.vsix" -o -name "*.nupkg" \))
+          prerelease=""
+          case "${{ github.ref_name }}" in *-*) prerelease="--prerelease" ;; esac
+          gh release create "${{ github.ref_name }}" $files --title "${{ github.ref_name }}" --notes-file CHANGELOG.md $prerelease
+
+      # The stores are optional: each step runs only when its secret is configured.
+      - name: NuGet.org
+        env:
+          NUGET_API_KEY: ${{ secrets.NUGET_API_KEY }}
+        if: env.NUGET_API_KEY != ''
+        run: dotnet nuget push "$(find dist -name "*.nupkg")" --api-key "$NUGET_API_KEY" --source https://api.nuget.org/v3/index.json --skip-duplicate
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - name: Visual Studio Marketplace
+        env:
+          VSCE_PAT: ${{ secrets.VSCE_PAT }}
+        if: env.VSCE_PAT != ''
+        run: npx --yes @vscode/vsce publish --packagePath $(find dist -name "*.vsix")
+
+      - name: Open VSX
+        env:
+          OVSX_PAT: ${{ secrets.OVSX_PAT }}
+        if: env.OVSX_PAT != ''
+        run: npx --yes ovsx publish --packagePath $(find dist -name "*.vsix") -p "$OVSX_PAT"

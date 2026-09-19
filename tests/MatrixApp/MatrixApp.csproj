@@ -1,0 +1,26 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <!--
+    The integration test debuggee (the sources of ../TestApp) for other runtimes and deployment models. Not part of
+    the solution: the matrix tests publish it themselves (self-contained, single-file, ReadyToRun; net8.0, net9.0, net10.0).
+  -->
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <TargetFrameworks>net9.0;net8.0;net10.0</TargetFrameworks>
+    <AssemblyName>TestApp</AssemblyName>
+    <RootNamespace>TestApp</RootNamespace>
+    <LangVersion>latest</LangVersion>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+    <Optimize>false</Optimize>
+    <DebugType>portable</DebugType>
+    <DefineConstants>$(DefineConstants);DEBUG</DefineConstants>
+    <EnableDefaultCompileItems>false</EnableDefaultCompileItems>
+    <SatelliteResourceLanguages>en</SatelliteResourceLanguages>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <Compile Include="..\TestApp\*.cs" />
+  </ItemGroup>
+
+</Project>

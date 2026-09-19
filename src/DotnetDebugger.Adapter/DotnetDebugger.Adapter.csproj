@@ -1,0 +1,40 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <ItemGroup>
+    <ProjectReference Include="..\DotnetDebugger.Protocol\DotnetDebugger.Protocol.csproj" />
+    <ProjectReference Include="..\DotnetDebugger.Engine\DotnetDebugger.Engine.csproj" />
+  </ItemGroup>
+
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <AssemblyName>dotnet-debugger</AssemblyName>
+    <RootNamespace>DotnetDebugger.Adapter</RootNamespace>
+    <RollForward>Major</RollForward>
+    <TargetFramework>net9.0</TargetFramework>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+    <SatelliteResourceLanguages>en</SatelliteResourceLanguages>
+  </PropertyGroup>
+
+  <!--
+    .NET tool:  dotnet tool install -g dotnet-debugger-dap   ->   dotnet-debugger
+    ("dotnet-debugger" itself is taken on nuget.org.) The package is RID-agnostic: dbgshim for every platform comes
+    along under runtimes/<rid>/native and the engine picks the one for the machine it runs on.
+  -->
+  <PropertyGroup>
+    <IsPackable>true</IsPackable>
+    <PackAsTool>true</PackAsTool>
+    <PackageId>dotnet-debugger-dap</PackageId>
+    <ToolCommandName>dotnet-debugger</ToolCommandName>
+    <Title>dotnet-debugger</Title>
+    <Description>A .NET debugger speaking the Debug Adapter Protocol (DAP): use it from VS Code, Neovim (nvim-dap), Emacs, Helix and any other DAP client. Breakpoints, stepping (async aware), expression evaluation, symbol servers, single-file and ReadyToRun applications.</Description>
+    <PackageTags>debugger;dap;debug-adapter-protocol;dotnet;coreclr;icordebug;vscode;neovim</PackageTags>
+    <PackageReadmeFile>README.md</PackageReadmeFile>
+    <PackageOutputPath>$(MSBuildThisFileDirectory)..\..\artifacts\packages</PackageOutputPath>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <None Include="..\..\docs\tool-readme.md" Pack="true" PackagePath="README.md" />
+  </ItemGroup>
+
+</Project>
