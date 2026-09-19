@@ -176,7 +176,7 @@ public class LaunchTests
     {
         using var client = new DapClient();
         client.Initialize();
-        DapMessage response = client.RequestRaw("launch", new { project = TestAppProject, launchSettingsProfile = "Nope" });
+        DapMessage response = client.RequestRaw("launch", new { project = TestAppProject, configuration = TestPaths.Configuration, launchSettingsProfile = "Nope" });
         Assert.False(response.Success);
         Assert.Contains("Nope", response.Message);
 

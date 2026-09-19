@@ -202,6 +202,14 @@ public class DebuggingTests
 
         client.Request("pause", new { threadId = 0 });
         StoppedEventBody stop = client.WaitForStop("pause");
+        // "mode: wait" is printed by Main: on a busy machine the pause can come before Wait() is even called
+        for (int attempt = 0; attempt < 20 && client.StackTrace(stop.ThreadId!.Value).All(f => f.Name != "TestApp.Program.Wait()"); attempt++)
+        {
+            client.Request("continue", new { threadId = stop.ThreadId });
+            System.Threading.Thread.Sleep(50);
+            client.Request("pause", new { threadId = 0 });
+            stop = client.WaitForStop("pause");
+        }
         Assert.NotEmpty(client.Request<ThreadsResponseBody>("threads").Threads);
         Assert.Contains(client.StackTrace(stop.ThreadId!.Value), f => f.Name == "TestApp.Program.Wait()");
         client.Request("continue", new { threadId = stop.ThreadId });

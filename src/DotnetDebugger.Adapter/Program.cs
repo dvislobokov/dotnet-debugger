@@ -53,6 +53,20 @@ foreach (string arg in args)
     }
 }
 
+// DOTNET_DEBUGGER_LOG_DIR: a trace per adapter process without touching the client's configuration (CI, bug reports)
+if (logPath == null && Environment.GetEnvironmentVariable("DOTNET_DEBUGGER_LOG_DIR") is { Length: > 0 } logDirectory)
+{
+    try
+    {
+        Directory.CreateDirectory(logDirectory);
+        logPath = Path.Combine(logDirectory, $"adapter-{DateTime.Now:HHmmss-fff}-{Environment.ProcessId}.log");
+    }
+    catch (Exception e) when (e is IOException or UnauthorizedAccessException)
+    {
+        Console.Error.WriteLine("Cannot create the log directory: " + e.Message);
+    }
+}
+
 StreamWriter? logWriter = logPath == null ? null : new StreamWriter(logPath, append: false) { AutoFlush = true };
 void Log(string message)
 {

@@ -139,7 +139,7 @@ public sealed partial class DebugEngine : IDisposable
             _launched = launched;
             _processId = launched?.ProcessId ?? external!.ProcessId;
             _resumeAction = launched?.Resume ?? external!.Resume;
-            _externalExitCode = external?.ExitCode;
+            _externalExitCode = external?.ExitCode ?? launched?.ExitCode;
 
             if (launched != null)
             {
@@ -294,7 +294,7 @@ public sealed partial class DebugEngine : IDisposable
             return;
         }
 
-        bool isOurChild = !OperatingSystem.IsWindows() && _launched != null;
+        bool isOurChild = !OperatingSystem.IsWindows() && _launched is { ExitCode: null };
         Task.Factory.StartNew(() =>
         {
             int? exitCode = null;
@@ -303,7 +303,11 @@ public sealed partial class DebugEngine : IDisposable
                 // On Unix only the parent gets to know an exit code. The debuggee was forked by dbgshim inside this
                 // process, so it is our child even though System.Diagnostics.Process does not know that.
                 if (isOurChild)
-                    exitCode = WaitForChild(process.Id);
+                {
+                    exitCode = WaitForChild(process.Id, out int error);
+                    if (exitCode == null)
+                        Log?.Invoke($"waitpid({process.Id}) failed with errno {error}: the exit code is lost");
+                }
                 process.WaitForExit();
                 try
                 {
@@ -323,14 +327,15 @@ public sealed partial class DebugEngine : IDisposable
         }, TaskCreationOptions.LongRunning);
     }
 
-    private static int? WaitForChild(int processId)
+    private static int? WaitForChild(int processId, out int error)
     {
+        error = 0;
         while (true)
         {
             int waited = waitpid(processId, out int status, 0);
             if (waited == processId)
                 return (status & 0x7f) == 0 ? (status >> 8) & 0xff : 128 + (status & 0x7f);
-            if (waited < 0 && Marshal.GetLastPInvokeError() != 4 /* EINTR */)
+            if (waited < 0 && (error = Marshal.GetLastPInvokeError()) != 4 /* EINTR */)
                 return null; // not our child, or somebody else reaped it
         }
     }
@@ -455,6 +460,7 @@ public sealed partial class DebugEngine : IDisposable
             }
             _corDebug = null;
             _launched?.StdIn.Dispose();
+            _launched?.Abandon?.Invoke();
             foreach (LoadedModule module in _modules.Values)
                 module.Metadata?.Dispose();
             _modules.Clear();

@@ -12,6 +12,12 @@ internal sealed class LaunchedProcess
     public required Stream StdOut { get; init; }
     public required Stream StdErr { get; init; }
     public required Stream StdIn { get; init; }
+
+    /// <summary>Set when the process is not a child of this one and its launcher reports the exit code (Unix).</summary>
+    public Task<int?>? ExitCode { get; init; }
+
+    /// <summary>The debugger is done with the process, which may live on (detach): nobody is going to listen to its launcher.</summary>
+    public Action? Abandon { get; init; }
 }
 
 /// <summary>
@@ -23,7 +29,7 @@ internal static class ProcessLauncher
     public static LaunchedProcess Launch(DbgShim dbgShim, string program, IReadOnlyList<string> args, string? cwd,
         IReadOnlyDictionary<string, string?>? env)
     {
-        string commandLine = BuildCommandLine(program, args);
+        List<string> argv = BuildArguments(program, args);
 
         var stdout = new AnonymousPipeServerStream(PipeDirection.In, HandleInheritability.Inheritable);
         var stderr = new AnonymousPipeServerStream(PipeDirection.In, HandleInheritability.Inheritable);
@@ -34,14 +40,14 @@ internal static class ProcessLauncher
             IntPtr hOut = stdout.ClientSafePipeHandle.DangerousGetHandle();
             IntPtr hErr = stderr.ClientSafePipeHandle.DangerousGetHandle();
 
-            (int pid, Action resume) = OperatingSystem.IsWindows()
-                ? LaunchWindows(commandLine, cwd, env, hIn, hOut, hErr)
-                : LaunchUnix(dbgShim, commandLine, cwd, env, (int)hIn, (int)hOut, (int)hErr);
+            (int pid, Action resume, Task<int?>? exitCode, Action? abandon) = OperatingSystem.IsWindows()
+                ? LaunchWindows(string.Join(' ', argv.Select(QuoteArgument)), cwd, env, hIn, hOut, hErr)
+                : LaunchUnix(dbgShim, argv, cwd, env, (int)hIn, (int)hOut, (int)hErr);
 
             stdin.DisposeLocalCopyOfClientHandle();
             stdout.DisposeLocalCopyOfClientHandle();
             stderr.DisposeLocalCopyOfClientHandle();
-            return new LaunchedProcess { ProcessId = pid, Resume = resume, StdOut = stdout, StdErr = stderr, StdIn = stdin };
+            return new LaunchedProcess { ProcessId = pid, Resume = resume, StdOut = stdout, StdErr = stderr, StdIn = stdin, ExitCode = exitCode, Abandon = abandon };
         }
         catch
         {
@@ -53,14 +59,17 @@ internal static class ProcessLauncher
     }
 
     /// <summary>Command line for a program that is either a managed dll (run by the dotnet host) or an executable.</summary>
-    internal static string BuildCommandLine(string program, IReadOnlyList<string> args)
+    internal static string BuildCommandLine(string program, IReadOnlyList<string> args) =>
+        string.Join(' ', BuildArguments(program, args).Select(QuoteArgument));
+
+    private static List<string> BuildArguments(string program, IReadOnlyList<string> args)
     {
         var argv = new List<string>();
         if (program.EndsWith(".dll", StringComparison.OrdinalIgnoreCase))
             argv.Add(FindDotnetHost());
         argv.Add(program);
         argv.AddRange(args);
-        return string.Join(' ', argv.Select(QuoteArgument));
+        return argv;
     }
 
     private static string FindDotnetHost()
@@ -133,7 +142,7 @@ internal static class ProcessLauncher
 
     // dbgshim's CreateProcessForLaunch passes bInheritHandles=FALSE, which makes stdio
     // redirection impossible, so on Windows we create the suspended process ourselves.
-    private static (int, Action) LaunchWindows(string commandLine, string? cwd, IReadOnlyDictionary<string, string?>? env,
+    private static (int, Action, Task<int?>?, Action?) LaunchWindows(string commandLine, string? cwd, IReadOnlyDictionary<string, string?>? env,
         IntPtr hIn, IntPtr hOut, IntPtr hErr)
     {
         const uint CREATE_SUSPENDED = 0x4, CREATE_UNICODE_ENVIRONMENT = 0x400, CREATE_NO_WINDOW = 0x08000000;
@@ -166,7 +175,7 @@ internal static class ProcessLauncher
             {
                 ResumeThread(pi.hThread);
                 CloseHandle(pi.hThread);
-            });
+            }, null, null);
         }
         finally
         {
@@ -206,15 +215,43 @@ internal static class ProcessLauncher
 
     private static readonly object s_stdioSwapLock = new();
 
+    // The debuggee must not be a child of this process. The exit code of a child goes to whoever calls waitpid first,
+    // and the PAL inside the debugging libraries does that for every process it watches: every now and then the code
+    // was lost (waitpid failing with ECHILD). So a shell stands in between:
+    //
+    //   outer sh (our child, nobody cares)  --  inner sh: reports its pid, waits for "go", then exec's the debuggee
+    //
+    // exec keeps the pid, so the runtime startup hook can be registered for it while the shell is still waiting. When
+    // the debuggee is gone the outer shell reports "exit N". Both directions are FIFOs: a shell has nothing better.
+    private const string LaunchScript =
+        "ctl=\"$1\"; go=\"$2\"; shift 2\n" +
+        // the shell's own stderr goes nowhere: its "Killed" about a terminated debuggee is not the debuggee's output
+        "exec 3>&2 2>/dev/null\n" +
+        "/bin/sh -c 'echo \"pid $$\" > \"$0\"; read line < \"$1\"; shift; exec \"$@\"' \"$ctl\" \"$go\" \"$@\" 2>&3 3>&-\n" +
+        "code=$?\n" +
+        // the FIFO disappears when the debugger has detached or is gone: nobody would ever read it
+        "if [ -p \"$ctl\" ]; then echo \"exit $code\" > \"$ctl\"; fi\n";
+
     // The PAL's CreateProcess forks with the parent's fds 0/1/2, so the pipes are
     // put in place of our own stdio for the duration of the call.
-    private static (int, Action) LaunchUnix(DbgShim dbgShim, string commandLine, string? cwd,
+    private static (int, Action, Task<int?>?, Action?) LaunchUnix(DbgShim dbgShim, List<string> argv, string? cwd,
         IReadOnlyDictionary<string, string?>? env, int fdIn, int fdOut, int fdErr)
     {
+        string directory = Directory.CreateTempSubdirectory("dotnet-debugger-").FullName;
+        string script = Path.Combine(directory, "launch.sh"), control = Path.Combine(directory, "ctl"), go = Path.Combine(directory, "go");
+        FileStream? controlStream = null, goStream = null;
         byte[] envBlock = Encoding.UTF8.GetBytes(string.Concat(BuildEnvironment(env).Select(e => e + "\0")) + "\0");
         GCHandle envHandle = GCHandle.Alloc(envBlock, GCHandleType.Pinned);
         try
         {
+            File.WriteAllText(script, LaunchScript);
+            if (mkfifo(control, 0x180 /* 0600 */) != 0 || mkfifo(go, 0x180) != 0)
+                throw new DebuggerException($"Cannot create a FIFO in '{directory}' (errno {Marshal.GetLastPInvokeError()}).");
+            // read+write: opening never blocks, and the reader sees no end of file between the two writers
+            controlStream = new FileStream(control, FileMode.Open, FileAccess.ReadWrite, FileShare.ReadWrite, 1);
+            goStream = new FileStream(go, FileMode.Open, FileAccess.ReadWrite, FileShare.ReadWrite, 1);
+
+            string commandLine = string.Join(' ', new[] { "/bin/sh", script, control, go }.Concat(argv).Select(QuoteArgument));
             CreateProcessForLaunchResult result;
             lock (s_stdioSwapLock)
             {
@@ -234,12 +271,47 @@ internal static class ProcessLauncher
                     Restore(saved2, 2);
                 }
             }
+            dbgShim.ResumeProcess(result.ResumeHandle);
+            dbgShim.CloseResumeHandle(result.ResumeHandle);
 
-            return (result.ProcessId, () =>
+            var reader = new StreamReader(controlStream, Encoding.ASCII, false, 64, leaveOpen: true);
+            Task<string?> first = Task.Run(reader.ReadLine);
+            if (!first.Wait(TimeSpan.FromSeconds(15)) || first.Result?.Split(' ') is not ["pid", var pidText] || !int.TryParse(pidText, out int pid))
+                throw new DebuggerException("The launcher shell did not report the process id" + (first.IsCompleted ? $": '{first.Result}'." : "."));
+
+            FileStream controlOwned = controlStream, goOwned = goStream;
+            int shell = result.ProcessId;
+            Task<int?> exitCode = Task.Run(() =>
             {
-                dbgShim.ResumeProcess(result.ResumeHandle);
-                dbgShim.CloseResumeHandle(result.ResumeHandle);
+                try
+                {
+                    return reader.ReadLine()?.Split(' ') is ["exit", var codeText] && int.TryParse(codeText, out int code) ? code : (int?)null;
+                }
+                catch (Exception e) when (e is IOException or ObjectDisposedException)
+                {
+                    return null;
+                }
+                finally
+                {
+                    waitpid(shell, out _, 0); // no zombie; whoever else reaps it is welcome
+                    controlOwned.Dispose();
+                    goOwned.Dispose();
+                    TryDelete(directory);
+                }
             });
+            controlStream = goStream = null;
+            return (pid, () =>
+            {
+                goOwned.Write("go\n"u8);
+                goOwned.Flush();
+            }, exitCode, () => TryDelete(directory));
+        }
+        catch
+        {
+            controlStream?.Dispose();
+            goStream?.Dispose();
+            TryDelete(directory);
+            throw;
         }
         finally
         {
@@ -253,7 +325,24 @@ internal static class ProcessLauncher
             dup2(saved, target);
             close(saved);
         }
+
+        static void TryDelete(string directory)
+        {
+            try
+            {
+                Directory.Delete(directory, recursive: true);
+            }
+            catch (Exception e) when (e is IOException or UnauthorizedAccessException)
+            {
+            }
+        }
     }
+
+    [DllImport("libc", SetLastError = true)]
+    private static extern int mkfifo(string path, uint mode);
+
+    [DllImport("libc", SetLastError = true)]
+    private static extern int waitpid(int pid, out int status, int options);
 
     [DllImport("libc", SetLastError = true)]
     private static extern int dup(int fd);
