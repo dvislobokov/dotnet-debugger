@@ -48,7 +48,13 @@ dotnet pack src/DotnetDebugger.Adapter -c Release                 # -> artifacts
 
 Релиз делает тег: `git tag v0.2.0 && git push --tags` запускает `.github/workflows/release.yml`, который собирает
 архивы адаптера для семи RID, platform-specific `.vsix`, NuGet-пакет тулы и создаёт GitHub Release. Публикация в
-NuGet.org, Marketplace и Open VSX включается наличием секретов `NUGET_API_KEY`, `VSCE_PAT`, `OVSX_PAT`.
+Marketplace и Open VSX включается наличием секретов `VSCE_PAT`, `OVSX_PAT`. В NuGet.org пакет уходит через
+[Trusted Publishing](https://learn.microsoft.com/nuget/nuget-org/trusted-publishing) — без долгоживущих ключей: на
+nuget.org заводится политика (владелец `dvislobokov`, репозиторий `dotnet-debugger`, workflow `release.yml`), а в
+переменных репозитория — `NUGET_USER` с именем пользователя nuget.org. Запасной путь — секрет `NUGET_API_KEY`.
+
+Всё собирается под .NET 8 (`DebuggerTargetFramework` в `Directory.Build.props`) с `RollForward=Major`: адаптер работает
+на любом установленном рантайме начиная с 8. Архивы релиза и `.vsix` — self-contained, им .NET не нужен вовсе.
 
 CI (`.github/workflows/ci.yml`) гоняет полный набор тестов, матрицу рантаймов, установленную тулу и тесты расширения
 на Windows, Linux и macOS. macOS пока помечен `experimental` (его падение не ломает сборку): там код ещё не проверялся.

@@ -8,6 +8,9 @@ dotnet tool install -g dotnet-debugger-dap
 dotnet-debugger --version
 ```
 
+Runs on .NET 8 or newer (it rolls forward to whatever runtime is installed). The release archives and the VS Code
+extension are self-contained and need no .NET at all.
+
 The command talks DAP over stdin/stdout (or TCP with `--server[=PORT]`), which is what editors expect from a debug adapter.
 
 ## Neovim (nvim-dap)

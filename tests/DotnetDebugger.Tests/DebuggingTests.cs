@@ -229,6 +229,8 @@ public class DebuggingTests
         client.Request("terminate");
         client.WaitForEvent("exited");
         client.WaitForEvent("terminated");
+        // on Unix a shell stands between the adapter and the debuggee: its remarks are not the debuggee's output
+        Assert.DoesNotContain("Killed", client.Output("stderr"));
     }
 
     [Fact]

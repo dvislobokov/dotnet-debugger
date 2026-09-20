@@ -19,7 +19,13 @@ fi
 for rid in "$@"; do
   output="$root/artifacts/publish/$rid"
   rm -rf "$output"
-  dotnet publish "$project" -c "${CONFIGURATION:-Release}" -r "$rid" --self-contained "${SELF_CONTAINED:-false}" \
+  # self-contained: a single compressed executable (plus dbgshim); no trimming, the expression interpreter needs reflection
+  if [ "${SELF_CONTAINED:-false}" = "true" ]; then
+    flavor="--self-contained true -p:PublishSingleFile=true -p:EnableCompressionInSingleFile=true"
+  else
+    flavor="--self-contained false"
+  fi
+  dotnet publish "$project" -c "${CONFIGURATION:-Release}" -r "$rid" $flavor \
     -o "$output" -nologo -v q -p:DebugType=embedded -p:SatelliteResourceLanguages=en
   echo "Published $rid -> $output"
 done

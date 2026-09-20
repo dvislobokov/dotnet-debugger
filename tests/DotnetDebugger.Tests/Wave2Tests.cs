@@ -7,7 +7,7 @@ namespace DotnetDebugger.Tests;
 /// <summary>Roadmap wave 2 (2.1, Linux/macOS, is skipped on the owner's request).</summary>
 public class Wave2Tests
 {
-    private static string EmbeddedAppDll => Path.Combine(TestPaths.Root, "tests", "EmbeddedApp", "bin", TestPaths.Configuration, "net9.0", "EmbeddedApp.dll");
+    private static string EmbeddedAppDll => Path.Combine(TestPaths.Root, "tests", "EmbeddedApp", "bin", TestPaths.Configuration, TestPaths.TargetFramework, "EmbeddedApp.dll");
     private static string EmbeddedAppDirectory => Path.Combine(TestPaths.Root, "tests", "EmbeddedApp");
 
     // ---------------------------------------------------------------- 2.2 DebuggerTypeProxy

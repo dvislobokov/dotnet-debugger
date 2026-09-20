@@ -30,7 +30,10 @@ jobs:
         include:
           - { name: Windows x64, os: windows-latest, rid: win-x64, experimental: false }
           - { name: Linux x64, os: ubuntu-latest, rid: linux-x64, experimental: false }
-          - { name: macOS arm64, os: macos-latest, rid: osx-arm64, experimental: true }
+          # macOS is switched off for now: debugging works there, but a full run starves the runner until GitHub loses it
+          # (~45 minutes, billed tenfold in a private repository, and no logs survive). It is being investigated with
+          # .github/workflows/macos-diagnostics.yml; put this line back when that one is green.
+          # - { name: macOS arm64, os: macos-latest, rid: osx-arm64, experimental: true }
     steps:
       - uses: actions/checkout@v4
 
@@ -100,11 +103,12 @@ jobs:
           $env:DOTNET_DEBUGGER_ADAPTER = Join-Path $PWD "artifacts/tool/$exe"
           dotnet test -c Release --no-build --filter "FullyQualifiedName!~RuntimeMatrixTests&FullyQualifiedName!~StressTests"
 
+      # As released: self-contained, no .NET needed. The extension tests below and the .vsix use this build.
       - name: Publish the adapter
         id: publish
         if: ${{ !cancelled() && steps.build.outcome == 'success' }}
         shell: pwsh
-        run: ./build/publish.ps1 -Rid ${{ matrix.rid }}
+        run: ./build/publish.ps1 -Rid ${{ matrix.rid }} -SelfContained
 
       - uses: actions/setup-node@v4
         if: ${{ !cancelled() && steps.publish.outcome == 'success' }}
@@ -123,6 +127,9 @@ jobs:
         run: |
           npm ci
           npm run compile
+          # the tests drive the self-contained executable that goes into the .vsix
+          $exe = if ($IsWindows) { 'dotnet-debugger.exe' } else { 'dotnet-debugger' }
+          $env:DOTNET_DEBUGGER_ADAPTER = Join-Path $env:GITHUB_WORKSPACE "artifacts/publish/${{ matrix.rid }}/$exe"
           if ($IsLinux) { xvfb-run -a node out/test/runTest.js } else { node out/test/runTest.js }
           npm run package -- ${{ matrix.rid }}
 

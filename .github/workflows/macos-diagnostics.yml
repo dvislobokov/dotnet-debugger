@@ -1,0 +1,112 @@
+name: macOS diagnostics
+
+# macOS cannot be tried locally, and a full CI run there ended with "the hosted runner lost communication": the machine
+# was starved and took its logs with it. This workflow runs the suite in small chunks and uploads the adapter traces
+# and a resource monitor after every chunk, so whatever happens last is still documented by the uploads before it.
+# Manual only: macOS minutes of a private repository are billed tenfold.
+on:
+  workflow_dispatch:
+
+env:
+  DOTNET_NOLOGO: 1
+  DOTNET_CLI_TELEMETRY_OPTOUT: 1
+  DOTNET_DEBUGGER_TEST_LOG: ${{ github.workspace }}/artifacts/test-logs/
+
+jobs:
+  diagnose:
+    runs-on: macos-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: |
+            8.0.x
+            9.0.x
+            10.0.x
+
+      - name: Allow debugging without a prompt
+        run: |
+          sudo /usr/sbin/DevToolsSecurity -enable
+          sudo dseditgroup -o edit -a "$(whoami)" -t user _developer
+          DevToolsSecurity -status
+          sw_vers; sysctl -n hw.ncpu hw.memsize; csrutil status || true
+
+      - name: Build
+        run: dotnet build -c Release
+
+      # every 5 seconds: load, free memory, how many processes of ours exist, who burns the CPU
+      - name: Start the resource monitor
+        run: |
+          mkdir -p artifacts/test-logs
+          nohup bash build/resource-monitor.sh artifacts/test-logs/monitor.log 5 > /dev/null 2>&1 &
+
+      - name: Tests 1-basics
+        continue-on-error: true
+        timeout-minutes: 5
+        run: dotnet test tests/DotnetDebugger.Tests -c Release --no-build --filter "FullyQualifiedName~DebuggingTests" --logger "console;verbosity=normal" --blame-hang-timeout 90s
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: macos-1-basics
+          if-no-files-found: ignore
+          retention-days: 7
+          path: |
+            artifacts/test-logs
+            **/TestResults/**
+
+      - name: Tests 2-session-breakpoints
+        continue-on-error: true
+        timeout-minutes: 5
+        run: dotnet test tests/DotnetDebugger.Tests -c Release --no-build --filter "FullyQualifiedName~SessionTests|FullyQualifiedName~BreakpointTests" --logger "console;verbosity=normal" --blame-hang-timeout 90s
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: macos-2-session-breakpoints
+          if-no-files-found: ignore
+          retention-days: 7
+          path: |
+            artifacts/test-logs
+            **/TestResults/**
+
+      - name: Tests 3-launch
+        continue-on-error: true
+        timeout-minutes: 5
+        run: dotnet test tests/DotnetDebugger.Tests -c Release --no-build --filter "FullyQualifiedName~LaunchTests" --logger "console;verbosity=normal" --blame-hang-timeout 90s
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: macos-3-launch
+          if-no-files-found: ignore
+          retention-days: 7
+          path: |
+            artifacts/test-logs
+            **/TestResults/**
+
+      - name: Tests 4-evaluation-inspection-stepping
+        continue-on-error: true
+        timeout-minutes: 5
+        run: dotnet test tests/DotnetDebugger.Tests -c Release --no-build --filter "FullyQualifiedName~EvaluationTests|FullyQualifiedName~InspectionTests|FullyQualifiedName~SteppingTests" --logger "console;verbosity=normal" --blame-hang-timeout 90s
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: macos-4-evaluation-inspection-stepping
+          if-no-files-found: ignore
+          retention-days: 7
+          path: |
+            artifacts/test-logs
+            **/TestResults/**
+
+      - name: Tests 5-waves
+        continue-on-error: true
+        timeout-minutes: 5
+        run: dotnet test tests/DotnetDebugger.Tests -c Release --no-build --filter "FullyQualifiedName~Wave1Tests|FullyQualifiedName~Wave2Tests|FullyQualifiedName~Wave3Tests" --logger "console;verbosity=normal" --blame-hang-timeout 90s
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: macos-5-waves
+          if-no-files-found: ignore
+          retention-days: 7
+          path: |
+            artifacts/test-logs
+            **/TestResults/**

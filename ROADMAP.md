@@ -32,10 +32,11 @@
 | 0.2 | Зафиксировать работу | ◐ `.gitattributes` добавлен. **Коммиты и создание репозитория на GitHub — за владельцем** |
 | 0.3 | Версионирование | ✔ одна версия в `Directory.Build.props`, `build/set-version.ps1` синхронизирует расширение, `CHANGELOG.md` |
 | 0.4 | Релизный конвейер | ✔ `.github/workflows/release.yml`: тег → архивы для 7 RID, `.vsix` по платформам, NuGet-пакет, GitHub Release. **Не запускался** (нет репозитория на GitHub) |
-| 0.5 | Публикация | ◐ шаги в конвейере есть и включаются секретами `NUGET_API_KEY`, `VSCE_PAT`, `OVSX_PAT`. Нужны: аккаунты издателя и сами секреты |
+| 0.5 | Публикация | ◐ шаги в конвейере есть. NuGet — через Trusted Publishing (политика на nuget.org + переменная `NUGET_USER`; запасной путь — секрет `NUGET_API_KEY`), Marketplace и Open VSX — секретами `VSCE_PAT`, `OVSX_PAT`. Нужны: аккаунты издателя и сами секреты |
 | 0.6 | Документация пользователя | ✔ `docs/usage.md`, README для NuGet-пакета, README расширения |
 | 0.7 | Баг-репорты | ✔ шаблон issue, команда «Collect Diagnostics» |
 | — | **.NET tool** | ✔ `dotnet tool install -g dotnet-debugger-dap` → команда `dotnet-debugger`. Имя `dotnet-debugger` на nuget.org занято чужим пакетом. Один пакет на все платформы (dbgshim для 11 RID внутри); весь набор тестов проходит против установленной тулы. Расширение VS Code использует её, если адаптер не встроен |
+| — | **Независимость от установленного .NET** | ✔ всё собирается под .NET 8 с `RollForward=Major` (адаптер и тула работают на 8, 9, 10); архивы релиза и `.vsix` — self-contained single-file (~40 МБ), .NET не нужен вовсе. Набор тестов проверен на настоящем .NET 8 (Docker). Найдено ограничение .NET 8 на Unix: цикл без safe point нельзя прервать — адаптер сообщает об этом вместо зависания |
 | — | **CI на трёх ОС** | ✔ `.github/workflows/ci.yml`: Windows и Linux обязательны, macOS — `experimental` до проверки. **На GitHub не запускался** |
 
 **Осталось владельцу:** создать репозиторий и запушить, завести издателя в Marketplace/Open VSX и API-ключ NuGet,

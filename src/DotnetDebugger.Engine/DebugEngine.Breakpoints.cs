@@ -123,7 +123,7 @@ public sealed partial class DebugEngine
         bool stoppedHere = false;
         if (_process != null && !_stopped)
         {
-            _process.Stop(0);
+            Synchronize(_process);
             stoppedHere = true;
         }
         try

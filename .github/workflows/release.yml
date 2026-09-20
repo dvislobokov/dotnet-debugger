@@ -42,7 +42,7 @@ jobs:
 
       - name: Publish the adapter
         shell: pwsh
-        run: ./build/publish.ps1 -Rid ${{ matrix.rid }}
+        run: ./build/publish.ps1 -Rid ${{ matrix.rid }} -SelfContained
 
       - name: Archive
         shell: pwsh
@@ -89,6 +89,9 @@ jobs:
     name: Publish
     needs: [build, tool]
     runs-on: ubuntu-latest
+    permissions:
+      contents: write   # the GitHub release
+      id-token: write   # the OIDC token that nuget.org exchanges for a short-lived API key (Trusted Publishing)
     steps:
       - uses: actions/checkout@v4
       - uses: actions/download-artifact@v4
@@ -106,10 +109,27 @@ jobs:
           case "${{ github.ref_name }}" in *-*) prerelease="--prerelease" ;; esac
           gh release create "${{ github.ref_name }}" $files --title "${{ github.ref_name }}" --notes-file CHANGELOG.md $prerelease
 
-      # The stores are optional: each step runs only when its secret is configured.
+      # The stores are optional: each step runs only when it is configured.
+      #
+      # NuGet.org, Trusted Publishing (preferred: no long-lived secret anywhere). Set up once:
+      #   1. nuget.org > your account > Trusted Publishing > add a policy:
+      #      repository owner "dvislobokov", repository "dotnet-debugger", workflow file "release.yml"
+      #   2. GitHub > Settings > Secrets and variables > Actions > Variables: NUGET_USER = your nuget.org user name
+      #      (the profile name, not the e-mail address)
+      # For a private repository the policy is only "temporarily active" for 7 days until the first successful push
+      # (nuget.org learns the repository id from it); the window can be restarted on the same page.
+      # The key is valid for one hour and is requested right before the push.
+      - name: NuGet.org login (Trusted Publishing)
+        id: nuget-login
+        if: vars.NUGET_USER != ''
+        uses: NuGet/login@v1
+        with:
+          user: ${{ vars.NUGET_USER }}
+
+      # Fallback: a classic API key in the secret NUGET_API_KEY.
       - name: NuGet.org
         env:
-          NUGET_API_KEY: ${{ secrets.NUGET_API_KEY }}
+          NUGET_API_KEY: ${{ steps.nuget-login.outputs.NUGET_API_KEY || secrets.NUGET_API_KEY }}
         if: env.NUGET_API_KEY != ''
         run: dotnet nuget push "$(find dist -name "*.nupkg")" --api-key "$NUGET_API_KEY" --source https://api.nuget.org/v3/index.json --skip-duplicate
 

@@ -485,18 +485,30 @@ internal sealed class DebugAdapter : IDisposable
                 };
             }
 
+            // The response goes first. Ending the process produces "exited" and "terminated", and a client that sees
+            // "terminated" closes the session and rejects whatever is still pending (VS Code: "Canceled").
             case "terminate":
-                _engine.Terminate();
+                _afterResponse = _engine.Terminate;
                 return null;
 
             case "disconnect":
             {
                 var args = request.GetArguments<DisconnectArguments>();
-                if (args?.TerminateDebuggee ?? !_isAttach)
-                    _engine.Terminate();
-                else
-                    _engine.Detach();
-                SendTerminated();
+                bool terminate = args?.TerminateDebuggee ?? !_isAttach;
+                _afterResponse = () =>
+                {
+                    try
+                    {
+                        if (terminate)
+                            _engine.Terminate();
+                        else
+                            _engine.Detach();
+                    }
+                    finally
+                    {
+                        SendTerminated();
+                    }
+                };
                 return null;
             }
 

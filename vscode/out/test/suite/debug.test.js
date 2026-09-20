@@ -43,12 +43,12 @@ const processPicker_1 = require("../../processPicker");
 const repoRoot = path.resolve(__dirname, '..', '..', '..', '..');
 const testApp = path.join(repoRoot, 'tests', 'TestApp');
 const configuration = process.env.DOTNET_DEBUGGER_TEST_CONFIGURATION ?? 'Debug';
-const testAppDll = path.join(testApp, 'bin', configuration, 'net9.0', 'TestApp.dll');
+const testAppDll = path.join(testApp, 'bin', configuration, 'net8.0', 'TestApp.dll');
 function adapterPath() {
     if (process.env.DOTNET_DEBUGGER_ADAPTER) {
         return process.env.DOTNET_DEBUGGER_ADAPTER;
     }
-    return path.join(repoRoot, 'src', 'DotnetDebugger.Adapter', 'bin', configuration, 'net9.0', 'dotnet-debugger.dll');
+    return path.join(repoRoot, 'src', 'DotnetDebugger.Adapter', 'bin', configuration, 'net8.0', 'dotnet-debugger.dll');
 }
 /** 1-based line of the statement tagged with "// bp:<marker>" in Program.cs. */
 function lineOf(marker) {

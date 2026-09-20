@@ -225,9 +225,10 @@ internal static class ProcessLauncher
     // the debuggee is gone the outer shell reports "exit N". Both directions are FIFOs: a shell has nothing better.
     private const string LaunchScript =
         "ctl=\"$1\"; go=\"$2\"; shift 2\n" +
-        // the shell's own stderr goes nowhere: its "Killed" about a terminated debuggee is not the debuggee's output
-        "exec 3>&2 2>/dev/null\n" +
-        "/bin/sh -c 'echo \"pid $$\" > \"$0\"; read line < \"$1\"; shift; exec \"$@\"' \"$ctl\" \"$go\" \"$@\" 2>&3 3>&-\n" +
+        // In the background and waited for: a shell reports the death of a foreground command ("Killed") on stderr, which
+        // is the debuggee's stderr. A background command would get /dev/null as its stdin, hence "<&0".
+        "/bin/sh -c 'echo \"pid $$\" > \"$0\"; read line < \"$1\"; shift; exec \"$@\"' \"$ctl\" \"$go\" \"$@\" <&0 &\n" +
+        "wait $! 2>/dev/null\n" + // dash prints the remark from "wait" as well
         "code=$?\n" +
         // the FIFO disappears when the debugger has detached or is gone: nobody would ever read it
         "if [ -p \"$ctl\" ]; then echo \"exit $code\" > \"$ctl\"; fi\n";

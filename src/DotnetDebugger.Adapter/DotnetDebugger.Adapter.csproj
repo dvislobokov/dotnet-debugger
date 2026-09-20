@@ -9,8 +9,7 @@
     <OutputType>Exe</OutputType>
     <AssemblyName>dotnet-debugger</AssemblyName>
     <RootNamespace>DotnetDebugger.Adapter</RootNamespace>
-    <RollForward>Major</RollForward>
-    <TargetFramework>net9.0</TargetFramework>
+    <TargetFramework>$(DebuggerTargetFramework)</TargetFramework>
     <ImplicitUsings>enable</ImplicitUsings>
     <Nullable>enable</Nullable>
     <SatelliteResourceLanguages>en</SatelliteResourceLanguages>

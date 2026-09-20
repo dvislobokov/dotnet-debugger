@@ -244,7 +244,7 @@ internal sealed class SymbolDeployment : IDisposable
 
     public SymbolDeployment()
     {
-        string source = Path.Combine(TestPaths.Root, "tests", "SymbolApp", "bin", TestPaths.Configuration, "net9.0");
+        string source = Path.Combine(TestPaths.Root, "tests", "SymbolApp", "bin", TestPaths.Configuration, TestPaths.TargetFramework);
         Directory.CreateDirectory(Path.Combine(_root, "app"));
         Directory.CreateDirectory(CacheDirectory);
         foreach (string file in Directory.GetFiles(source))

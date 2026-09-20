@@ -13,4 +13,14 @@
     <IsPackable>false</IsPackable>
   </PropertyGroup>
 
+  <!--
+    Everything targets the oldest supported runtime and rolls forward to whatever is installed: the adapter has to start
+    on a machine that has nothing but .NET 8 (a locked down corporate environment), and equally on one with only .NET 10.
+    The debuggees of the tests follow the same rule, so the suite runs wherever the repository builds.
+  -->
+  <PropertyGroup>
+    <DebuggerTargetFramework>net8.0</DebuggerTargetFramework>
+    <RollForward>Major</RollForward>
+  </PropertyGroup>
+
 </Project>

@@ -41,7 +41,7 @@ public sealed partial class DebugEngine : IEvalHost
             Monitor.PulseAll(_lock);
             try
             {
-                _process.Stop(0);
+                Synchronize(_process);
                 pending.Eval.Abort();
                 _process.Continue(false);
             }
@@ -97,18 +97,18 @@ public sealed partial class DebugEngine : IEvalHost
                 Log?.Invoke(reason + " Aborting.");
                 if (!pending.Cancelled)
                 {
-                    process.Stop(0);
+                    Synchronize(process);
                     eval.Abort();
                     process.Continue(false);
                 }
                 if (!WaitForEval(pending, AbortTimeout, stopOnCancel: false))
                 {
-                    process.Stop(0);
+                    Synchronize(process);
                     eval.RudeAbort();
                     process.Continue(false);
                     if (!WaitForEval(pending, AbortTimeout, stopOnCancel: false))
                     {
-                        process.Stop(0);
+                        Synchronize(process);
                         _stopped = true;
                         reason += " The evaluated code could not be interrupted and is still running on its thread.";
                     }
@@ -147,7 +147,8 @@ public sealed partial class DebugEngine : IEvalHost
             _pendingEval = null;
             try
             {
-                if (!_processExited && _process != null)
+                // once Stop has hung, every other call into the debugging interface blocks behind it
+                if (!_processExited && _process != null && !_cannotSynchronize)
                 {
                     _process.SetAllThreadsDebugState(CorDebugThreadState.THREAD_RUN, null!);
                     RestoreFrozenThreads(_process);

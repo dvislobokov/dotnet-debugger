@@ -91,7 +91,7 @@ internal static class TerminalLauncher
         string processPath = Environment.ProcessPath ?? throw new DebuggerException("Cannot determine the path of the debugger.");
         string host = Path.GetFileNameWithoutExtension(processPath);
         return host.Equals("dotnet", StringComparison.OrdinalIgnoreCase)
-            ? [processPath, Assembly.GetEntryAssembly()!.Location]
+            ? [processPath, Path.Combine(AppContext.BaseDirectory, Assembly.GetEntryAssembly()!.GetName().Name + ".dll")]
             : [processPath];
     }
 }

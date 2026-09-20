@@ -2,7 +2,7 @@
 
   <!-- A library whose PDB the tests take away from next to the dll and publish through a symbol store instead. -->
   <PropertyGroup>
-    <TargetFramework>net9.0</TargetFramework>
+    <TargetFramework>$(DebuggerTargetFramework)</TargetFramework>
     <ImplicitUsings>enable</ImplicitUsings>
     <Nullable>enable</Nullable>
     <Optimize>false</Optimize>

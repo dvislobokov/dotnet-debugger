@@ -369,12 +369,12 @@ public sealed partial class DebugEngine : IDisposable
         {
             if (_processExited || _processId == 0)
                 return;
-            if (_process != null)
+            if (_process != null && !_cannotSynchronize)
             {
                 try
                 {
                     if (!_stopped)
-                        _process.Stop(0);
+                        Synchronize(_process);
                     _process.Terminate(0);
                     viaCorDebug = true;
                 }
@@ -397,7 +397,7 @@ public sealed partial class DebugEngine : IDisposable
             try
             {
                 if (!_stopped)
-                    _process.Stop(0);
+                    Synchronize(_process);
                 foreach (UserBreakpoint bp in AllBreakpoints)
                     Unbind(bp);
                 DeactivateStepper();
@@ -412,6 +412,38 @@ public sealed partial class DebugEngine : IDisposable
             _processExited = true;
             ClearStopState();
         }
+    }
+
+    private static readonly TimeSpan SynchronizeTimeout = TimeSpan.FromSeconds(10);
+    private bool _cannotSynchronize;
+
+    /// <summary>
+    /// ICorDebugProcess.Stop with a way out. The runtime stops a thread at a safe point; .NET 8 on Unix does not interrupt
+    /// a loop that has none (no calls, no allocations), so Stop never returns there (.NET 9 fixed it). The call cannot be
+    /// taken back: the debugging interface stays blocked, and all that is left is to say so and to kill the process when asked.
+    /// </summary>
+    private void Synchronize(CorDebugProcess process)
+    {
+        const string Message = "The debuggee cannot be stopped: a thread is running a loop the runtime cannot interrupt " +
+            "(a limitation of .NET 8 on Linux and macOS). The session can only be terminated.";
+        if (_cannotSynchronize)
+            throw new DebuggerException(Message);
+        Task stop = Task.Run(() => process.Stop(0));
+        bool finished;
+        try
+        {
+            finished = stop.Wait(SynchronizeTimeout);
+        }
+        catch (AggregateException e)
+        {
+            throw e.InnerException ?? e;
+        }
+        if (finished)
+            return;
+        _cannotSynchronize = true;
+        Log?.Invoke("ICorDebugProcess.Stop did not return.");
+        Output?.Invoke("console", Message + Environment.NewLine);
+        throw new DebuggerException(Message);
     }
 
     private void KillProcess()
@@ -452,7 +484,9 @@ public sealed partial class DebugEngine : IDisposable
         {
             try
             {
-                _corDebug?.Terminate();
+                // behind a Stop that never returned this would block as well: the process is being killed, which is enough
+                if (!_cannotSynchronize)
+                    _corDebug?.Terminate();
             }
             catch (Exception)
             {
@@ -840,7 +874,7 @@ public sealed partial class DebugEngine : IDisposable
                 _pauseRequested |= _resolvingBreakpoint;
                 return;
             }
-            process.Stop(0);
+            Synchronize(process);
             _stopped = true;
             stop = new StopInfo("pause", PickThreadForPause(process));
         }
@@ -874,7 +908,7 @@ public sealed partial class DebugEngine : IDisposable
             bool stoppedHere = false;
             if (!_stopped)
             {
-                _process.Stop(0);
+                Synchronize(_process);
                 stoppedHere = true;
             }
             try

@@ -15,4 +15,6 @@ First public version.
   `sourceFileMap`.
 - Verified on Windows x64 and Linux x64 with .NET 8, 9 and 10, including self-contained, single-file and ReadyToRun
   applications. macOS builds are produced but have not been verified yet.
+- The adapter targets .NET 8 and rolls forward, so it starts on a machine that has nothing but .NET 8; release archives
+  and the VS Code extension are self-contained single-file builds that need no installed .NET.
 - VS Code extension with one-click launch commands; .NET tool package (`dotnet tool install -g dotnet-debugger-dap`).

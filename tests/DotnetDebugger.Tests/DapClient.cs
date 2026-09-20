@@ -455,11 +455,14 @@ internal static class TestPaths
     public static string Root => s_root;
     public static string Configuration => s_configuration;
 
+    /// <summary>What the adapter and the debuggees are built for (DebuggerTargetFramework in Directory.Build.props).</summary>
+    public const string TargetFramework = "net8.0";
+
     public static string AdapterDll =>
-        Path.Combine(s_root, "src", "DotnetDebugger.Adapter", "bin", s_configuration, "net9.0", "dotnet-debugger.dll");
+        Path.Combine(s_root, "src", "DotnetDebugger.Adapter", "bin", s_configuration, TargetFramework, "dotnet-debugger.dll");
 
     public static string TestAppDll =>
-        Path.Combine(s_root, "tests", "TestApp", "bin", s_configuration, "net9.0", "TestApp.dll");
+        Path.Combine(s_root, "tests", "TestApp", "bin", s_configuration, TargetFramework, "TestApp.dll");
 
     public static string TestAppDirectory => Path.Combine(s_root, "tests", "TestApp");
 
