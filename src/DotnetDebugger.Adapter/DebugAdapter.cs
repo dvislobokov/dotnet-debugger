@@ -519,7 +519,9 @@ internal sealed class DebugAdapter : IDisposable
 
     private void Launch(LaunchArguments args)
     {
-        ResolvedLaunch launch = LaunchResolver.Resolve(args, text => _connection.SendEvent("output", new OutputEventBody { Category = "console", Output = text }));
+        void Note(string text) => _connection.SendEvent("output", new OutputEventBody { Category = "console", Output = text });
+        ResolvedLaunch launch = LaunchResolver.Resolve(args, Note);
+        launch = launch with { Program = DotnetDebugger.Engine.Launch.MacCodeSigning.ResolveDebuggableProgram(launch.Program, Note) };
 
         string? terminalKind = args.Console switch
         {
