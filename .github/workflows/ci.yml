@@ -42,6 +42,15 @@ jobs:
             9.0.x
             10.0.x
 
+      # Debugging an executable that is not signed with "get-task-allow" (an apphost, unlike the dotnet host itself) makes
+      # macOS ask for "Developer Tools Access". Nobody answers that dialog here, and every later session hangs behind it.
+      - name: Allow debugging without a prompt (macOS)
+        if: runner.os == 'macOS'
+        run: |
+          sudo /usr/sbin/DevToolsSecurity -enable
+          sudo dseditgroup -o edit -a "$(whoami)" -t user _developer
+          DevToolsSecurity -status
+
       - name: Build
         id: build
         run: dotnet build -c Release
@@ -50,15 +59,16 @@ jobs:
       - name: Test (adapter + engine through DAP)
         id: tests
         # Where debugging does not start at all, every test waits for its own timeout. The limit is on the step, not on
-        # the job: a step that times out fails, and the diagnostics below are still collected.
-        timeout-minutes: 45
+        # the job: a step that times out fails, and the diagnostics below are still collected. A healthy run takes 2-4
+        # minutes; a runner left with hundreds of hanging sessions for longer than this was lost altogether.
+        timeout-minutes: 20
         run: dotnet test -c Release --no-build --logger "trx;LogFileName=tests.trx" --logger "console;verbosity=normal" --blame-hang-timeout 5m
         env:
           DOTNET_DEBUGGER_STRESS: 1
 
       - name: Runtime matrix (.NET 8/9/10, self-contained, single-file, ReadyToRun)
         if: ${{ !cancelled() && steps.build.outcome == 'success' }}
-        timeout-minutes: 30
+        timeout-minutes: 20
         run: dotnet test -c Release --no-build --filter "FullyQualifiedName~RuntimeMatrixTests" --logger "trx;LogFileName=matrix.trx"
         env:
           DOTNET_DEBUGGER_MATRIX: 1

@@ -68,7 +68,8 @@ public class SessionTests
         string stdout = client.Output("stdout");
         Assert.Contains("arg: with space and \"quotes\";", stdout);
         Assert.Contains("env: from-launch;", stdout);
-        Assert.Contains("cwd: " + cwd, stdout, StringComparison.OrdinalIgnoreCase);
+        // macOS: the temporary directory is /var/folders/..., and /var is a link to /private/var, which is what the process reports
+        Assert.Contains("cwd: " + cwd, stdout.Replace("cwd: /private/var/", "cwd: /var/"), StringComparison.OrdinalIgnoreCase);
     }
 
     [Fact]
