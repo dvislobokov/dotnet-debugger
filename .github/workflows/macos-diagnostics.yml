@@ -3,6 +3,7 @@ name: macOS diagnostics
 # macOS cannot be tried locally, and a full CI run there ended with "the hosted runner lost communication": the machine
 # was starved and took its logs with it. This workflow runs the suite in small chunks and uploads the adapter traces
 # and a resource monitor after every chunk, so whatever happens last is still documented by the uploads before it.
+# The launch tests run one by one: one of them is what kills the machine (basics, sessions and breakpoints are fine).
 # Manual only: macOS minutes of a private repository are billed tenfold.
 on:
   workflow_dispatch:
@@ -35,78 +36,184 @@ jobs:
       - name: Build
         run: dotnet build -c Release
 
+      - name: Code signatures (who may be debugged)
+        run: |
+          for f in "$(which dotnet)" tests/TestApp/bin/Release/net8.0/TestApp; do
+            echo "=== $f"; codesign -d --entitlements - --xml "$f" 2>&1 | head -20; echo
+          done
+
       # every 5 seconds: load, free memory, how many processes of ours exist, who burns the CPU
       - name: Start the resource monitor
         run: |
           mkdir -p artifacts/test-logs
           nohup bash build/resource-monitor.sh artifacts/test-logs/monitor.log 5 > /dev/null 2>&1 &
 
-      - name: Tests 1-basics
+      - name: Tests launch-01-UnknownProfileOrProjectFails
         continue-on-error: true
-        timeout-minutes: 5
-        run: dotnet test tests/DotnetDebugger.Tests -c Release --no-build --filter "FullyQualifiedName~DebuggingTests" --logger "console;verbosity=normal" --blame-hang-timeout 90s
+        timeout-minutes: 3
+        run: dotnet test tests/DotnetDebugger.Tests -c Release --no-build --filter "FullyQualifiedName~LaunchTests.UnknownProfileOrProjectFails" --logger "console;verbosity=normal" --blame-hang-timeout 90s
       - uses: actions/upload-artifact@v4
         if: always()
         with:
-          name: macos-1-basics
+          name: macos-launch-01-UnknownProfileOrProjectFails
           if-no-files-found: ignore
           retention-days: 7
-          path: |
-            artifacts/test-logs
-            **/TestResults/**
+          path: artifacts/test-logs
 
-      - name: Tests 2-session-breakpoints
+      - name: Tests launch-02-LaunchSettingsCanBeUsedWithProgramAndDisabled
         continue-on-error: true
-        timeout-minutes: 5
-        run: dotnet test tests/DotnetDebugger.Tests -c Release --no-build --filter "FullyQualifiedName~SessionTests|FullyQualifiedName~BreakpointTests" --logger "console;verbosity=normal" --blame-hang-timeout 90s
+        timeout-minutes: 3
+        run: dotnet test tests/DotnetDebugger.Tests -c Release --no-build --filter "FullyQualifiedName~LaunchTests.LaunchSettingsCanBeUsedWithProgramAndDisabled" --logger "console;verbosity=normal" --blame-hang-timeout 90s
       - uses: actions/upload-artifact@v4
         if: always()
         with:
-          name: macos-2-session-breakpoints
+          name: macos-launch-02-LaunchSettingsCanBeUsedWithProgramAndDisabled
           if-no-files-found: ignore
           retention-days: 7
-          path: |
-            artifacts/test-logs
-            **/TestResults/**
+          path: artifacts/test-logs
 
-      - name: Tests 3-launch
+      - name: Tests launch-03-DefaultLaunchProfileIsApplied
         continue-on-error: true
-        timeout-minutes: 5
-        run: dotnet test tests/DotnetDebugger.Tests -c Release --no-build --filter "FullyQualifiedName~LaunchTests" --logger "console;verbosity=normal" --blame-hang-timeout 90s
+        timeout-minutes: 3
+        run: dotnet test tests/DotnetDebugger.Tests -c Release --no-build --filter "FullyQualifiedName~LaunchTests.DefaultLaunchProfileIsApplied" --logger "console;verbosity=normal" --blame-hang-timeout 90s
       - uses: actions/upload-artifact@v4
         if: always()
         with:
-          name: macos-3-launch
+          name: macos-launch-03-DefaultLaunchProfileIsApplied
           if-no-files-found: ignore
           retention-days: 7
-          path: |
-            artifacts/test-logs
-            **/TestResults/**
+          path: artifacts/test-logs
 
-      - name: Tests 4-evaluation-inspection-stepping
+      - name: Tests launch-04-NamedLaunchProfileAndOverrides
         continue-on-error: true
-        timeout-minutes: 5
+        timeout-minutes: 3
+        run: dotnet test tests/DotnetDebugger.Tests -c Release --no-build --filter "FullyQualifiedName~LaunchTests.NamedLaunchProfileAndOverrides" --logger "console;verbosity=normal" --blame-hang-timeout 90s
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: macos-launch-04-NamedLaunchProfileAndOverrides
+          if-no-files-found: ignore
+          retention-days: 7
+          path: artifacts/test-logs
+
+      - name: Tests launch-05-ProjectIsResolvedToItsOutputAssembly
+        continue-on-error: true
+        timeout-minutes: 3
+        run: dotnet test tests/DotnetDebugger.Tests -c Release --no-build --filter "FullyQualifiedName~LaunchTests.ProjectIsResolvedToItsOutputAssembly" --logger "console;verbosity=normal" --blame-hang-timeout 90s
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: macos-launch-05-ProjectIsResolvedToItsOutputAssembly
+          if-no-files-found: ignore
+          retention-days: 7
+          path: artifacts/test-logs
+
+      - name: Tests launch-06-ProjectDirectoryWorksToo
+        continue-on-error: true
+        timeout-minutes: 3
+        run: dotnet test tests/DotnetDebugger.Tests -c Release --no-build --filter "FullyQualifiedName~LaunchTests.ProjectDirectoryWorksToo" --logger "console;verbosity=normal" --blame-hang-timeout 90s
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: macos-launch-06-ProjectDirectoryWorksToo
+          if-no-files-found: ignore
+          retention-days: 7
+          path: artifacts/test-logs
+
+      - name: Tests launch-07-BuildBeforeLaunch
+        continue-on-error: true
+        timeout-minutes: 3
+        run: dotnet test tests/DotnetDebugger.Tests -c Release --no-build --filter "FullyQualifiedName~LaunchTests.BuildBeforeLaunch" --logger "console;verbosity=normal" --blame-hang-timeout 90s
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: macos-launch-07-BuildBeforeLaunch
+          if-no-files-found: ignore
+          retention-days: 7
+          path: artifacts/test-logs
+
+      - name: Tests launch-09-TerminalIsNotUsedWhenTheClientCannotProvideOne
+        continue-on-error: true
+        timeout-minutes: 3
+        run: dotnet test tests/DotnetDebugger.Tests -c Release --no-build --filter "FullyQualifiedName~LaunchTests.TerminalIsNotUsedWhenTheClientCannotProvideOne" --logger "console;verbosity=normal" --blame-hang-timeout 90s
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: macos-launch-09-TerminalIsNotUsedWhenTheClientCannotProvideOne
+          if-no-files-found: ignore
+          retention-days: 7
+          path: artifacts/test-logs
+
+      - name: Tests launch-10-TerminalLaunchIsKilledOnDisconnect
+        continue-on-error: true
+        timeout-minutes: 3
+        run: dotnet test tests/DotnetDebugger.Tests -c Release --no-build --filter "FullyQualifiedName~LaunchTests.TerminalLaunchIsKilledOnDisconnect" --logger "console;verbosity=normal" --blame-hang-timeout 90s
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: macos-launch-10-TerminalLaunchIsKilledOnDisconnect
+          if-no-files-found: ignore
+          retention-days: 7
+          path: artifacts/test-logs
+
+      - name: Tests launch-11-RunInTerminalGivesTheDebuggeeARealStdin
+        continue-on-error: true
+        timeout-minutes: 3
+        run: dotnet test tests/DotnetDebugger.Tests -c Release --no-build --filter "FullyQualifiedName~LaunchTests.RunInTerminalGivesTheDebuggeeARealStdin" --logger "console;verbosity=normal" --blame-hang-timeout 90s
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: macos-launch-11-RunInTerminalGivesTheDebuggeeARealStdin
+          if-no-files-found: ignore
+          retention-days: 7
+          path: artifacts/test-logs
+
+      - name: Tests evaluation-inspection-stepping
+        continue-on-error: true
+        timeout-minutes: 3
         run: dotnet test tests/DotnetDebugger.Tests -c Release --no-build --filter "FullyQualifiedName~EvaluationTests|FullyQualifiedName~InspectionTests|FullyQualifiedName~SteppingTests" --logger "console;verbosity=normal" --blame-hang-timeout 90s
       - uses: actions/upload-artifact@v4
         if: always()
         with:
-          name: macos-4-evaluation-inspection-stepping
+          name: macos-evaluation-inspection-stepping
           if-no-files-found: ignore
           retention-days: 7
-          path: |
-            artifacts/test-logs
-            **/TestResults/**
+          path: artifacts/test-logs
 
-      - name: Tests 5-waves
+      - name: Tests waves
         continue-on-error: true
-        timeout-minutes: 5
+        timeout-minutes: 3
         run: dotnet test tests/DotnetDebugger.Tests -c Release --no-build --filter "FullyQualifiedName~Wave1Tests|FullyQualifiedName~Wave2Tests|FullyQualifiedName~Wave3Tests" --logger "console;verbosity=normal" --blame-hang-timeout 90s
       - uses: actions/upload-artifact@v4
         if: always()
         with:
-          name: macos-5-waves
+          name: macos-waves
           if-no-files-found: ignore
           retention-days: 7
-          path: |
-            artifacts/test-logs
-            **/TestResults/**
+          path: artifacts/test-logs
+
+      - name: Tests launch-08-ProgramCanBeAnApphost
+        continue-on-error: true
+        timeout-minutes: 3
+        run: dotnet test tests/DotnetDebugger.Tests -c Release --no-build --filter "FullyQualifiedName~LaunchTests.ProgramCanBeAnApphost" --logger "console;verbosity=normal" --blame-hang-timeout 90s
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: macos-launch-08-ProgramCanBeAnApphost
+          if-no-files-found: ignore
+          retention-days: 7
+          path: artifacts/test-logs
+
+      - name: Tests runtime-matrix
+        continue-on-error: true
+        timeout-minutes: 8
+        env:
+          DOTNET_DEBUGGER_MATRIX: 1
+        run: dotnet test tests/DotnetDebugger.Tests -c Release --no-build --filter "FullyQualifiedName~RuntimeMatrixTests" --logger "console;verbosity=normal" --blame-hang-timeout 90s
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: macos-runtime-matrix
+          if-no-files-found: ignore
+          retention-days: 7
+          path: artifacts/test-logs
