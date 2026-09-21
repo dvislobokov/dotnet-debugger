@@ -5,6 +5,7 @@
     <TargetFramework>$(DebuggerTargetFramework)</TargetFramework>
     <ImplicitUsings>enable</ImplicitUsings>
     <Nullable>enable</Nullable>
+    <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
     <!-- The debuggee of the integration tests must stay debuggable in every configuration. -->
     <Optimize>false</Optimize>
     <DebugType>portable</DebugType>

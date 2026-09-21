@@ -50,6 +50,12 @@ public sealed partial class DebugEngine
 
             switch (operand)
             {
+                case HostOperand { EnumClass: { } enumClass, Value: not null }:
+                    result.Add(new TypeSignature(EnumTypeName(enumClass) ?? "?", []));
+                    AddNamed("System.Enum");
+                    result.Add(new TypeSignature("System.ValueType", []));
+                    break;
+
                 case HostOperand { Value: { } hostValue }:
                     AddNamed(hostValue.GetType().FullName!);
                     break;

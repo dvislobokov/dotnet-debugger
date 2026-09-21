@@ -26,6 +26,10 @@ Fixes for the findings of a black-box DAP probe of 0.1.0 (regression tests: `Fin
   `$exception` can be evaluated in an `[External Code]` frame; invalid hit conditions and lines <= 0 are rejected with
   a message; a condition that is not `bool` is reported; a missing `cwd` fails the launch on every platform.
 - Linux/macOS: the debuggee no longer outlives a killed adapter.
+- Expressions: optional parameters are filled in, enum arguments (`perm.HasFlag(Perm.Write)`), delegates are invoked
+  (`twice(4)`), tuple element names of locals (`tuple.Name`), `checked` / `unchecked`, pointer dereference (`*p`),
+  type parameters of the current frame (`typeof(T)`, `default(T)`), `null` for `Nullable<T>` and whole structs in
+  assignments and `setVariable`, the element count format specifier (`numbers,5`).
 
 ## 0.1.0 — unreleased
 

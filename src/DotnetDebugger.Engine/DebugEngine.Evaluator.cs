@@ -48,7 +48,8 @@ public sealed partial class DebugEngine
         private sealed record HostOperand(object? Value, CorDebugClass? EnumClass = null) : Operand;
 
         /// <param name="IsLocation">The getter returns a storage location (variable, field, element) that can be assigned to.</param>
-        private sealed record RemoteOperand(Func<CorDebugValue?> Getter, bool IsLocation = false) : Operand;
+        /// <param name="TupleNames">Names the source gives to the elements of a tuple-typed local (Item1, Item2, ... in the type).</param>
+        private sealed record RemoteOperand(Func<CorDebugValue?> Getter, bool IsLocation = false, string?[]? TupleNames = null) : Operand;
 
         private sealed record TypeOperand(LoadedModule Module, int Token, IReadOnlyList<TypeOperand>? TypeArguments = null) : Operand
         {
@@ -68,6 +69,10 @@ public sealed partial class DebugEngine
         private List<(string Name, Func<CorDebugValue?> Getter)>? _locals;
         private Operand? _conditionalReceiver;
         private List<CorDebugType>? _explicitTypeArguments;
+        private Dictionary<string, string?[]>? _tupleNames;
+        private bool _checked;
+
+        private Dictionary<string, string?[]> TupleNames => _tupleNames ??= self != null ? [] : engine.GetLocalTupleElementNames(frame);
 
         private List<(string Name, Func<CorDebugValue?> Getter)> Locals =>
             _locals ??= self != null ? [("this", self)] : engine.GetLocalRefs(frame);
@@ -99,6 +104,13 @@ public sealed partial class DebugEngine
                 if (comma < 0)
                     return (expression, options);
                 string specifier = expression[(comma + 1)..].Trim();
+                if (specifier.Length is > 0 and < 10 && specifier.All(char.IsAsciiDigit))
+                {
+                    // "array,5": the first five elements
+                    options = options with { ElementLimit = int.Parse(specifier, System.Globalization.CultureInfo.InvariantCulture) };
+                    expression = expression[..comma];
+                    continue;
+                }
                 if (specifier.Length == 0 || !specifier.All(char.IsAsciiLetter))
                     return (expression, options);
 
@@ -108,7 +120,7 @@ public sealed partial class DebugEngine
                     "d" => options with { Hex = false },
                     "nq" => options with { NoQuotes = true },
                     "raw" => options with { Raw = true },
-                    _ => throw new DebuggerException($"Unknown format specifier '{specifier}'. Supported: h, d, nq, raw."),
+                    _ => throw new DebuggerException($"Unknown format specifier '{specifier}'. Supported: h, d, nq, raw and a number of elements."),
                 };
                 expression = expression[..comma];
             }
@@ -252,7 +264,7 @@ public sealed partial class DebugEngine
         {
             foreach ((string localName, Func<CorDebugValue?> getter) in Locals)
                 if (localName == name)
-                    return new RemoteOperand(getter, IsLocation: true);
+                    return new RemoteOperand(getter, IsLocation: true, TupleNames.GetValueOrDefault(name));
 
             if (name == "this")
                 throw new DebuggerException("Keyword 'this' is not available in the current context.");
@@ -331,7 +343,65 @@ public sealed partial class DebugEngine
             foreach (string candidate in candidates)
                 if (engine.FindType(candidate) is { } found)
                     return new TypeOperand(found.Module, found.Token);
-            return null;
+            return keyword == null && self == null ? ResolveTypeParameter(name) : null;
+        }
+
+        /// <summary>"T" inside generic code: the type argument of the instantiation the frame is running.</summary>
+        private TypeOperand? ResolveTypeParameter(string name)
+        {
+            CorDebugILFrame? ilFrame = engine.GetILFrame(frame);
+            if (ilFrame == null)
+                return null;
+            CorDebugFunction function = ilFrame.Function;
+            if (engine.GetMetadata(function.Module) is not { } metadata)
+                return null;
+
+            // type parameters of the declaring type come first, those of the method after them
+            int methodToken = (int)function.Token.Value;
+            string[] ofType = metadata.GetTypeGenericParameters(metadata.GetDeclaringType(methodToken));
+            string[] ofMethod = metadata.GetMethodGenericParameters(methodToken);
+            int index = Array.LastIndexOf(ofType.Concat(ofMethod).ToArray(), name);
+            if (index < 0)
+                return null;
+
+            CorDebugType[] actual = ilFrame.TypeParameters;
+            if (index < actual.Length && TypeOperandOf(actual[index]) is { } exact && exact.Metadata.GetTypeName(exact.Token) != "System.__Canon")
+                return exact;
+
+            // Code shared between reference types does not know its own type argument. A parameter declared as "T"
+            // holds an instance of it, which is the next best thing (and exact for sealed types such as string).
+            if (index >= ofType.Length)
+            {
+                string variable = "!!" + (index - ofType.Length);
+                MethodDescription? description = metadata.GetMethods(metadata.GetDeclaringType(methodToken), metadata.GetSimpleMethodName(methodToken))
+                    .FirstOrDefault(m => m.Token == methodToken);
+                int parameter = description == null ? -1 : Array.IndexOf(description.ParameterTypes, variable);
+                if (parameter >= 0)
+                {
+                    int argumentIndex = description!.IsStatic ? parameter : parameter + 1;
+                    CorDebugValue? argument = ValueInspector.Unwrap(ilFrame.GetArgument(argumentIndex), out bool isNull);
+                    if (!isNull && argument != null && TypeOperandOf(argument.ExactType) is { } fromValue)
+                        return fromValue;
+                }
+            }
+            throw new DebuggerException($"The type argument '{name}' is not known here: the code is shared between reference types.");
+        }
+
+        private TypeOperand? TypeOperandOf(CorDebugType type)
+        {
+            if (type.Type is CorElementType.Class or CorElementType.ValueType)
+            {
+                CorDebugClass cls = type.Class;
+                if (!engine._modules.TryGetValue(cls.Module.BaseAddress.Value, out LoadedModule? module) || module.Metadata == null)
+                    return null;
+                List<TypeOperand?> arguments = ValueInspector.TypeArgumentsOf(type).Select(TypeOperandOf).ToList();
+                return arguments.Contains(null)
+                    ? null
+                    : new TypeOperand(module, (int)cls.Token.Value, arguments.Count == 0 ? null : arguments.Select(a => a!).ToList());
+            }
+            if (type.Type is CorElementType.SZArray or CorElementType.Array or CorElementType.Ptr or CorElementType.ByRef or CorElementType.FnPtr)
+                return null;
+            return ResolveQualifiedType(_values.ClrTypeName(type));
         }
 
         private TypeOperand ResolveType(TypeSyntax syntax) =>
@@ -435,6 +505,10 @@ public sealed partial class DebugEngine
             CorDebugValue? unwrapped = ValueInspector.Unwrap(value, out bool isNull);
             if (isNull || unwrapped == null)
                 throw new DebuggerException("NullReferenceException: the value is null.");
+
+            // (int Id, string Name) tuple: "tuple.Name" is Item2. The eighth element and beyond live in Rest.
+            if (target.TupleNames is { } elementNames && Array.IndexOf(elementNames, name) is >= 0 and < 7 and int element)
+                name = "Item" + (element + 1);
 
             switch (unwrapped.Type)
             {
@@ -633,6 +707,9 @@ public sealed partial class DebugEngine
                     }
                     if (EnclosingType() is { } enclosing && TryCall(null, enclosing, name, arguments, false) is { } viaType)
                         return viaType;
+                    // not a method: a delegate in a local, a field or a property
+                    if (Identifier(name) is RemoteOperand callable)
+                        return CallOn(callable, "Invoke", arguments);
                     throw new DebuggerException($"The name '{name}' does not exist in the current context.");
                 }
                 case MemberAccessExpressionSyntax member:
@@ -748,8 +825,7 @@ public sealed partial class DebugEngine
             }
 
             // overload resolution by argument count and a simple type score; the most derived type wins
-            var argumentTypes = arguments.Select(ClrTypeOf).ToList();
-            (MethodLevel Level, MethodDescription Method, Dictionary<int, TypeSignature> Bindings)? best = null;
+            (MethodLevel Level, MethodDescription Method, Dictionary<int, TypeSignature> Bindings, List<Operand> Arguments)? best = null;
             foreach (MethodLevel level in levels)
             {
                 int bestScore = 0;
@@ -759,13 +835,19 @@ public sealed partial class DebugEngine
                     : level.Metadata.GetMethods(level.Token, name);
                 foreach (MethodDescription method in candidates)
                 {
-                    if (method.IsStatic != (target == null) || method.ParameterTypes.Length != arguments.Count)
+                    if (method.IsStatic != (target == null) || method.ParameterTypes.Length < arguments.Count)
                         continue;
-                    int score = 1 + ScoreByUnification(method, arguments, argumentTypes, out Dictionary<int, TypeSignature> bindings);
+                    // parameters left out are filled in with their default values, where they have one
+                    List<Operand>? complete = method.ParameterTypes.Length == arguments.Count ? arguments : WithDefaults(level.Metadata, method, arguments);
+                    if (complete == null)
+                        continue;
+                    int score = 1 + ScoreByUnification(method, complete, complete.Select(ClrTypeOf).ToList(), out Dictionary<int, TypeSignature> bindings);
+                    // a method that takes exactly these arguments beats one that needs defaults
+                    score = score <= 0 ? score : score * 2 + (ReferenceEquals(complete, arguments) ? 1 : 0);
                     if (score > bestScore)
                     {
                         bestScore = score;
-                        best = (level, method, bindings);
+                        best = (level, method, bindings, complete);
                     }
                 }
                 if (best != null)
@@ -774,15 +856,25 @@ public sealed partial class DebugEngine
             if (best == null)
                 return null;
 
-            (MethodLevel chosenLevel, MethodDescription chosen, Dictionary<int, TypeSignature> inferred) = best.Value;
+            (MethodLevel chosenLevel, MethodDescription chosen, Dictionary<int, TypeSignature> inferred, arguments) = best.Value;
 
             // Anything that runs code (string creation) comes first: it invalidates plain ICorDebug values.
+            // A method of System.Enum, System.ValueType or System.Object wants a boxed "this".
+            Func<CorDebugValue?>? boxedThis = null;
+            if (target != null && chosenLevel.Metadata.GetTypeName(chosenLevel.Token) is "System.Enum" or "System.ValueType" or "System.Object"
+                && target.Getter() is { } selfValue && selfValue is not CorDebugReferenceValue
+                && _values.TryReadHostValue(selfValue, out object? selfHost) && selfHost is ValueInspector.EnumBits selfBits)
+            {
+                boxedThis = BoxEnum(new HostOperand(selfBits.Underlying, selfBits.Class));
+            }
+
             var argumentGetters = new Func<CorDebugValue?>[arguments.Count];
             for (int i = 0; i < arguments.Count; i++)
             {
                 argumentGetters[i] = arguments[i] switch
                 {
                     HostOperand { Value: string } host => Materialize(host),
+                    HostOperand { EnumClass: not null, Value: not null } host => BoxEnum(host),
                     // A primitive for an "object" parameter has to be boxed by the caller. (For a generic "T value" it must
                     // not be: the func-eval takes the raw value there and misreads a box.)
                     HostOperand { Value: not null } host when chosen.ParameterTypes[i] == "System.Object" => MaterializeBoxed(host.Value),
@@ -801,7 +893,7 @@ public sealed partial class DebugEngine
                 CorDebugValue unwrappedSelf = ValueInspector.Unwrap(raw, out _)!;
                 bool isValueType = unwrappedSelf.Type is not (CorElementType.Class or CorElementType.Object or CorElementType.String
                     or CorElementType.SZArray or CorElementType.Array);
-                thisValue = isValueType ? unwrappedSelf : raw;
+                thisValue = boxedThis?.Invoke() ?? (isValueType ? unwrappedSelf : raw);
                 values.Add(thisValue);
             }
             for (int i = 0; i < arguments.Count; i++)
@@ -809,6 +901,12 @@ public sealed partial class DebugEngine
                 CorDebugValue? value = argumentGetters[i] != null
                     ? argumentGetters[i]()
                     : CreatePrimitive(ConvertForParameter(((HostOperand)arguments[i]).Value, chosen.ParameterTypes[i]));
+                // an enum made by the debugger is a box: right for "Enum" and "object", the value itself for "Perm" and "T"
+                if (value != null && arguments[i] is HostOperand { EnumClass: not null }
+                    && chosen.ParameterTypes[i] is not ("System.Enum" or "System.ValueType" or "System.Object"))
+                {
+                    value = ValueInspector.Unwrap(value, out _);
+                }
                 values.Add(value ?? throw new DebuggerException($"Argument {i + 1} is not available."));
             }
 
@@ -858,8 +956,28 @@ public sealed partial class DebugEngine
             return new RemoteOperand(engine.Stabilize(() => result));
         }
 
+        private List<Operand>? WithDefaults(ModuleMetadata metadata, MethodDescription method, List<Operand> arguments)
+        {
+            Dictionary<int, object?> defaults = metadata.GetParameterDefaults(method.Token);
+            var complete = new List<Operand>(arguments);
+            for (int i = arguments.Count; i < method.ParameterTypes.Length; i++)
+            {
+                if (!defaults.TryGetValue(i, out object? value))
+                    return null;
+                // the constant of an enum parameter is a number: it has to become that enum again
+                TypeOperand? parameterType = value == null || value is string ? null : ResolveQualifiedType(method.ParameterTypes[i]);
+                complete.Add(parameterType != null && parameterType.Metadata.IsEnum(parameterType.Token)
+                    ? new HostOperand(value, parameterType.Class)
+                    : new HostOperand(value));
+            }
+            return complete;
+        }
+
+        private string? EnumTypeName(CorDebugClass enumClass) => engine.GetMetadata(enumClass.Module)?.GetTypeName((int)enumClass.Token.Value);
+
         private string? ClrTypeOf(Operand operand) => operand switch
         {
+            HostOperand { EnumClass: { } enumClass, Value: not null } => EnumTypeName(enumClass),
             HostOperand host => host.Value?.GetType().FullName,
             RemoteOperand remote => remote.Getter() is { } v ? _values.GetClrTypeName(v) : null,
             _ => null,
@@ -930,6 +1048,16 @@ public sealed partial class DebugEngine
             }
             object? value = host.Value;
             return () => CreatePrimitive(value);
+        }
+
+        /// <summary>An enum value of the debugger's making, as a boxed object in the debuggee.</summary>
+        private Func<CorDebugValue?> BoxEnum(HostOperand host)
+        {
+            CorDebugClass cls = host.EnumClass!;
+            CorDebugValue? box = engine.RunEval(frame.ThreadId, eval => eval.NewParameterizedObjectNoConstructor(cls.Raw, 0, []));
+            Func<CorDebugValue?> boxed = engine.Stabilize(() => box);
+            AssignCore(() => _values.GetFieldByName(boxed()!, "value__"), new HostOperand(host.Value));
+            return boxed;
         }
 
         private Func<CorDebugValue?> MaterializeBoxed(object value)
@@ -1023,10 +1151,19 @@ public sealed partial class DebugEngine
 
         private Operand Unary(PrefixUnaryExpressionSyntax node)
         {
+            if (node.Kind() == SyntaxKind.PointerIndirectionExpression)
+            {
+                if (Eval(node.Operand) is not RemoteOperand pointer || pointer.Getter() is not CorDebugReferenceValue { Type: CorElementType.Ptr } address)
+                    throw new DebuggerException("The * operator can only be applied to a pointer.");
+                if (address.IsNull)
+                    throw new DebuggerException("NullReferenceException: the pointer is null.");
+                return new RemoteOperand(() => ((CorDebugReferenceValue)pointer.Getter()!).Dereference(), IsLocation: true);
+            }
+
             dynamic? operand = ToHost(Eval(node.Operand));
             return new HostOperand(node.Kind() switch
             {
-                SyntaxKind.UnaryMinusExpression => -operand,
+                SyntaxKind.UnaryMinusExpression => _checked ? checked(-operand) : -operand,
                 SyntaxKind.UnaryPlusExpression => +operand,
                 SyntaxKind.LogicalNotExpression => !operand,
                 SyntaxKind.BitwiseNotExpression => ~operand,
@@ -1075,9 +1212,9 @@ public sealed partial class DebugEngine
             dynamic? a = l, b = r;
             return new HostOperand(kind switch
             {
-                SyntaxKind.AddExpression => a + b,
-                SyntaxKind.SubtractExpression => a - b,
-                SyntaxKind.MultiplyExpression => a * b,
+                SyntaxKind.AddExpression => _checked ? checked(a + b) : a + b,
+                SyntaxKind.SubtractExpression => _checked ? checked(a - b) : a - b,
+                SyntaxKind.MultiplyExpression => _checked ? checked(a * b) : a * b,
                 SyntaxKind.DivideExpression => a / b,
                 SyntaxKind.ModuloExpression => a % b,
                 SyntaxKind.EqualsExpression => a == b,
@@ -1184,6 +1321,22 @@ public sealed partial class DebugEngine
                 return;
             }
 
+            if (target.Type == CorElementType.ValueType && _values.GetTypeName(target).StartsWith("System.Nullable<", StringComparison.Ordinal))
+            {
+                // Nullable<T> is a flag and a value: null clears the flag, anything else goes into the value
+                bool isNull = IsNull(source);
+                if (!isNull)
+                    AssignCore(() => _values.GetFieldByName(location()!, "value"), source);
+                ValueInspector.WriteBytes(_values.GetFieldByName(location()!, "hasValue")!, [(byte)(isNull ? 0 : 1)]);
+                return;
+            }
+
+            if (target.Type == CorElementType.ValueType && source is RemoteOperand structSource && !TryToHost(source, out _, out _))
+            {
+                CopyStruct(location()!, structSource.Getter() ?? throw new DebuggerException("The value is not available."));
+                return;
+            }
+
             object? value = TryToHost(source, out object? hostValue, out _)
                 ? hostValue
                 : throw new DebuggerException("The value cannot be converted to the type of the variable.");
@@ -1227,6 +1380,33 @@ public sealed partial class DebugEngine
             }
 
             DebuggerException Mismatch() => new("The value cannot be converted to the type of the variable.");
+        }
+
+        /// <summary>
+        /// Field by field rather than as a block of memory: references inside the struct have to go through the
+        /// debugging interface, which knows about the garbage collector's bookkeeping.
+        /// </summary>
+        private void CopyStruct(CorDebugValue target, CorDebugValue source, int depth = 0)
+        {
+            CorDebugValue? from = ValueInspector.Unwrap(source, out bool isNull);
+            if (isNull || from == null)
+                throw new DebuggerException("Cannot assign null to a value type.");
+            if (from.Type != CorElementType.ValueType || depth > 16 || _values.GetTypeName(from) != _values.GetTypeName(target))
+                throw new DebuggerException("The value cannot be converted to the type of the variable.");
+
+            List<(string Name, CorDebugValue? Value)> targetFields = _values.EnumerateFields(target).ToList();
+            List<(string Name, CorDebugValue? Value)> sourceFields = _values.EnumerateFields(from).ToList();
+            for (int i = 0; i < targetFields.Count; i++)
+            {
+                if (targetFields[i].Value is not { } to || i >= sourceFields.Count || sourceFields[i].Value is not { } value)
+                    throw new DebuggerException("The value cannot be copied: a field is not available.");
+                if (to is CorDebugReferenceValue reference && to.Type is not (CorElementType.Ptr or CorElementType.FnPtr))
+                    reference.Value = value is CorDebugReferenceValue { IsNull: false } r ? r.Value : new CORDB_ADDRESS(0);
+                else if (to.Type == CorElementType.ValueType)
+                    CopyStruct(to, value, depth + 1);
+                else
+                    ValueInspector.WriteBytes(to, ValueInspector.ReadRawBytes(value));
+            }
         }
     }
 }

@@ -556,6 +556,99 @@ public class FindingsTests
         Assert.False(client.HasPendingEvent("stopped"));
     }
 
+    // ---------------------------------------------------------------- 18. gaps of the expression evaluator
+
+    [Theory]
+    // optional parameters are filled in
+    [InlineData("greeter.Greet(\"bob\")", "\"hi bob!\"")]
+    [InlineData("greeter.Greet(\"bob\", 2)", "\"hi bobhi bob!\"")]
+    [InlineData("greeter.Greet(\"bob\", 1, \"?\")", "\"hi bob?\"")]
+    [InlineData("Greeter.Scale(4)", "41")]
+    [InlineData("Greeter.Scale(4, 100)", "401")]
+    // an enum argument for a System.Enum parameter
+    [InlineData("perm.HasFlag(Perm.Write)", "true")]
+    [InlineData("perm.HasFlag(Perm.Exec)", "false")]
+    // delegates are invoked like methods
+    [InlineData("twice(4)", "8")]
+    [InlineData("shifted(4)", "7")]
+    [InlineData("twice.Invoke(5) + 1", "11")]
+    // tuple element names come from the symbols
+    [InlineData("tuple.Name", "\"t\"")]
+    [InlineData("tuple.Id + tuple.Item1", "2")]
+    // checked / unchecked
+    [InlineData("checked(offset + 1)", "4")]
+    [InlineData("unchecked(offset * 2)", "6")]
+    // pointers
+    [InlineData("*pointer", "42")]
+    [InlineData("*pointer + 1", "43")]
+    [InlineData("*realPointer", "2.5")]
+    public void EvaluatorGaps(string expression, string expected)
+    {
+        using var client = new DapClient();
+        var (_, top) = client.RunTo("evaluator", "evaluator");
+        Assert.Equal(expected, client.Evaluate(expression, top.Id).Result);
+    }
+
+    [Fact]
+    public void CheckedArithmeticOverflows()
+    {
+        using var client = new DapClient();
+        var (_, top) = client.RunTo("evaluator", "evaluator");
+        Assert.Contains("Overflow", client.EvaluateError("checked(int.MaxValue + offset)", top.Id));
+    }
+
+    [Theory]
+    [InlineData("numbers,3", 3)]
+    [InlineData("numbers,100", 7)]
+    [InlineData("numbers, 2", 2)]
+    public void ElementCountFormatSpecifier(string expression, int expectedElements)
+    {
+        using var client = new DapClient();
+        var (_, top) = client.RunTo("evaluator", "evaluator");
+
+        EvaluateResponseBody shown = client.Evaluate(expression, top.Id);
+        Assert.Equal(expectedElements, shown.IndexedVariables);
+        Dictionary<string, Variable> children = client.Variables(shown.VariablesReference);
+        Assert.Equal(expectedElements, children.Count);
+        Assert.Equal("10", children["[0]"].Value);
+    }
+
+    [Fact]
+    public void TypeParametersOfAGenericMethodCanBeNamed()
+    {
+        using var client = new DapClient();
+        var (threadId, top) = client.RunTo("evaluator", "genericMethod");
+        Assert.Equal("\"Int32\"", client.Evaluate("typeof(T).Name", top.Id).Result);
+        Assert.Equal("0", client.Evaluate("default(T)", top.Id).Result);
+
+        // the second instantiation: shared code, where the exact type is only known to the runtime
+        (_, top) = client.ContinueToStop(threadId);
+        Assert.Equal("\"String\"", client.Evaluate("typeof(T).Name", top.Id).Result);
+    }
+
+    [Fact]
+    public void NullableAndStructVariablesCanBeAssigned()
+    {
+        using var client = new DapClient();
+        var (threadId, top) = client.RunTo("evaluator", "evaluator", "evaluatorAfter");
+        int locals = client.Request<ScopesResponseBody>("scopes", new { frameId = top.Id }).Scopes[0].VariablesReference;
+
+        Assert.Equal("null", client.Evaluate("maybe = null", top.Id).Result);
+        Assert.Equal("null", client.Locals(top.Id)["maybe"].Value);
+        Assert.Equal("7", client.Evaluate("maybe = 7", top.Id).Result);
+        var set = client.Request<SetVariableResponseBody>("setVariable", new { variablesReference = locals, name = "maybe", value = "null" });
+        Assert.Equal("null", set.Value);
+
+        client.Request("setVariable", new { variablesReference = locals, name = "point", value = "new GridPoint(9, 8)" });
+        Assert.Equal("9", client.Evaluate("point.X", top.Id).Result);
+        Assert.Equal("8", client.Evaluate("point.Y", top.Id).Result);
+
+        (_, top) = client.ContinueToStop(threadId);
+        client.Request("continue", new { threadId });
+        client.WaitForEvent("exited");
+        Assert.Contains("evaluator after null 9,8", client.Output("stdout"));
+    }
+
     // ---------------------------------------------------------------- L1 - L5: what the Linux run of the probe added
     // (L1 is UnpagedRequestForAHugeCollectionIsCapped, L3 is AttachToAMissingProcessIsExplainedInPlainWords)
 

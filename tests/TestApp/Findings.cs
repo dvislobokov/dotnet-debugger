@@ -70,6 +70,35 @@ public class Evil
     }
 }
 
+[Flags]
+public enum Perm
+{
+    None = 0,
+    Read = 1,
+    Write = 2,
+    Exec = 4,
+}
+
+public struct GridPoint(int x, int y)
+{
+    public int X = x;
+    public int Y = y;
+}
+
+public class Greeter
+{
+    public string Greet(string name, int times = 1, string suffix = "!") =>
+        string.Concat(Enumerable.Repeat("hi " + name, times)) + suffix;
+
+    public static long Scale(int value, long factor = 10, Perm perm = Perm.Read) => value * factor + (int)perm;
+
+    public static string TitleOf<T>(T item) where T : notnull
+    {
+        string title = item.ToString() + ":" + typeof(T).Name; // bp:genericMethod
+        return title;
+    }
+}
+
 public static class Findings
 {
     public static void Run(string mode, string[] args)
@@ -113,7 +142,30 @@ public static class Findings
             case "parseFail":
                 ParseFail();
                 break;
+            case "evaluator":
+                Evaluator();
+                break;
         }
+    }
+
+    private static unsafe void Evaluator()
+    {
+        var greeter = new Greeter();
+        Perm perm = Perm.Read | Perm.Write;
+        Func<int, int> twice = x => x * 2;
+        int offset = 3;
+        Func<int, int> shifted = x => x + offset;
+        (int Id, string Name) tuple = (1, "t");
+        int? maybe = 5;
+        var point = new GridPoint(1, 2);
+        int[] numbers = [10, 20, 30, 40, 50, 60, 70];
+        int target = 42;
+        int* pointer = &target;
+        double real = 2.5;
+        double* realPointer = &real;
+        Console.WriteLine(Greeter.TitleOf(7) + Greeter.TitleOf("text"));
+        Console.WriteLine($"evaluator {greeter.Greet("x")} {perm} {twice(2)} {shifted(1)} {tuple.Name} {maybe} {point.X} {numbers.Length} {*pointer} {*realPointer}"); // bp:evaluator
+        Console.WriteLine($"evaluator after {maybe?.ToString(CultureInfo.InvariantCulture) ?? "null"} {point.X},{point.Y}"); // bp:evaluatorAfter
     }
 
     private static void Values()

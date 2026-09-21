@@ -39,7 +39,8 @@ public sealed class VariableInfo
 
 /// <summary>How values are rendered; set through format specifiers ("x,h") or the client's value format.</summary>
 /// <param name="FullStrings">Do not shorten long strings (the client wants the value for the clipboard).</param>
-internal sealed record DisplayOptions(bool Hex = false, bool NoQuotes = false, bool Raw = false, bool FullStrings = false)
+/// <param name="ElementLimit">Show only the first elements of an array or collection ("numbers,5").</param>
+internal sealed record DisplayOptions(bool Hex = false, bool NoQuotes = false, bool Raw = false, bool FullStrings = false, int? ElementLimit = null)
 {
     public static readonly DisplayOptions Default = new();
 
@@ -112,7 +113,19 @@ internal sealed partial class ValueInspector
         _host.ThrowIfCancelled();
         try
         {
-            return DescribeCore(name, getter, evaluateName, context, options ?? DisplayOptions.Default);
+            VariableInfo info = DescribeCore(name, getter, evaluateName, context, options ?? DisplayOptions.Default);
+            return options?.ElementLimit is { } limit && info.IndexedChildren > limit && info.ChildrenProvider is { } all
+                ? new VariableInfo
+                {
+                    Name = info.Name, Value = info.Value, Type = info.Type, EvaluateName = info.EvaluateName, Location = info.Location,
+                    Context = info.Context, IndexedChildren = limit,
+                    ChildrenProvider = (start, count) =>
+                    {
+                        int first = Math.Max(0, start), take = count > 0 ? Math.Min(count, limit - first) : limit - first;
+                        return take <= 0 ? [] : all(first, take);
+                    },
+                }
+                : info;
         }
         catch (Exception e) when (e is not OperationCanceledException)
         {
@@ -1193,6 +1206,9 @@ internal sealed partial class ValueInspector
             return null;
         }
     }
+
+    /// <summary>The bytes of a primitive value, exactly as many as it has.</summary>
+    internal static byte[] ReadRawBytes(CorDebugValue value) => ReadBytes(value)[..value.Size];
 
     private static byte[] ReadBytes(CorDebugValue value)
     {

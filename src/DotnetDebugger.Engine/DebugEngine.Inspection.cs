@@ -482,6 +482,20 @@ public sealed partial class DebugEngine
         }
     }
 
+    private Dictionary<string, string?[]> GetLocalTupleElementNames(FrameRef frameRef)
+    {
+        try
+        {
+            CorDebugILFrame frame = RequireILFrame(frameRef);
+            CorDebugFunction function = frame.Function;
+            return GetMetadata(function.Module)?.GetLocalTupleElementNames((int)function.Token.Value, frame.IP.pnOffset) ?? [];
+        }
+        catch (Exception e) when (e is not OperationCanceledException)
+        {
+            return [];
+        }
+    }
+
     // ---------------------------------------------------------------- evaluate / set
 
     /// <param name="allowCalls">false for side-effect free contexts such as mouse hovers.</param>

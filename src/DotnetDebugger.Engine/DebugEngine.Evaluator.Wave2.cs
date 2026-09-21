@@ -31,6 +31,19 @@ public sealed partial class DebugEngine
                 case PrefixUnaryExpressionSyntax prefix when prefix.Kind() is SyntaxKind.PreIncrementExpression or SyntaxKind.PreDecrementExpression:
                     return Assign(prefix.Operand, BinaryOperation(prefix.Kind() == SyntaxKind.PreIncrementExpression ? SyntaxKind.AddExpression : SyntaxKind.SubtractExpression,
                         Eval(prefix.Operand), new HostOperand(1), prefix.OperatorToken.Text));
+                case CheckedExpressionSyntax checkedExpression:
+                {
+                    bool saved = _checked;
+                    _checked = checkedExpression.Kind() == SyntaxKind.CheckedExpression;
+                    try
+                    {
+                        return Eval(checkedExpression.Expression);
+                    }
+                    finally
+                    {
+                        _checked = saved;
+                    }
+                }
                 case TypeOfExpressionSyntax typeOf:
                     return TypeOf(ResolveType(typeOf.Type));
                 case DefaultExpressionSyntax defaultOf:
