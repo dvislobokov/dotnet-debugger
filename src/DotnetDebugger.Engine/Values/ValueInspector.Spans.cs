@@ -144,11 +144,11 @@ internal sealed partial class ValueInspector
         return new VariableInfo
         {
             Name = name, Value = display, Type = typeName, EvaluateName = evaluateName, Location = getter, Context = context,
-            IndexedChildren = length,
+            IndexedChildren = length, NamedChildren = length > 0 ? 1 : 0, // Raw View
             ChildrenProvider = length == 0 ? null : (start, count) =>
             {
                 var children = new List<VariableInfo>();
-                List<SpanElement> elements = GetSpanElements(stable, context, start, count);
+                List<SpanElement> elements = count == NamedOnly ? [] : GetSpanElements(stable, context, start, count);
                 for (int i = 0; i < elements.Count; i++)
                 {
                     string index = "[" + (start + i) + "]";

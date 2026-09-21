@@ -73,6 +73,12 @@ public sealed partial class DebugEngine : IDisposable
 
     public event Action<StopInfo>? Stopped;
     public event Action<int>? Exited;
+
+    /// <summary>
+    /// The debuggee runs again although nobody asked for that (continue and the steps do; their responses say so).
+    /// The one way there: an evaluation after which the runtime could not be stopped anymore.
+    /// </summary>
+    public event Action<int>? Continued;
     public event Action<string, string>? Output;
     public event Action<int, bool>? ThreadChanged;
     public event Action<ModuleLoadInfo>? ModuleLoaded;
@@ -420,6 +426,11 @@ public sealed partial class DebugEngine : IDisposable
 
     // ---------------------------------------------------------------- session end
 
+    /// <summary>What a killed process exits with: the code of Process.Kill on Windows. Elsewhere the signal decides (137).</summary>
+    private const int TerminatedExitCode = -1;
+
+    private bool _terminating;
+
     public void Terminate()
     {
         bool viaCorDebug = false;
@@ -427,14 +438,23 @@ public sealed partial class DebugEngine : IDisposable
         {
             if (_processExited || _processId == 0)
                 return;
+            // "terminate" is followed by "disconnect", and that by Dispose: the process is on its way out already,
+            // and a second ICorDebugProcess.Terminate only fails (the exit has not been reported yet)
+            if (_terminating)
+                return;
             if (_process != null && !_cannotSynchronize)
             {
                 try
                 {
                     if (!_stopped)
                         Synchronize(_process);
-                    _process.Terminate(0);
+                    _process.Terminate(TerminatedExitCode);
                     viaCorDebug = true;
+                    _terminating = true;
+                }
+                catch (DebugException e) when (e.HResult is HRESULT.CORDBG_E_PROCESS_TERMINATED)
+                {
+                    return; // it ended by itself in the meantime
                 }
                 catch (Exception e)
                 {
@@ -537,8 +557,12 @@ public sealed partial class DebugEngine : IDisposable
             _unregisterToken = IntPtr.Zero;
         }
 
-        if (_processWatcherStarted)
+        // no debuggee is left behind, whatever became of the polite way
+        if (_processWatcherStarted && !_processWatcherDone.Wait(TimeSpan.FromSeconds(3)) && !_isAttach)
+        {
+            KillProcess();
             _processWatcherDone.Wait(TimeSpan.FromSeconds(3));
+        }
         lock (_lock)
         {
             try

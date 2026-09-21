@@ -205,4 +205,4 @@ dap.adapters.coreclr = {
 | --- | --- |
 | Windows x64 | проверено: .NET 8, 9, 10; обычные, self-contained, single-file и ReadyToRun приложения; опубликованный адаптер, .NET-тула, расширение в VS Code |
 | Linux x64 | проверено в Docker (`./build/test-in-docker.ps1 -Matrix -Stress`): весь набор тестов, стресс-тесты и матрица рантаймов. Не проверены: расширение VS Code на Linux, musl (Alpine), arm64 |
-| macOS | не проверялось; в CI помечено `experimental` |
+| macOS | проверено локально (`bash build/test-on-macos.sh`, 2026-09-21): весь набор тестов зелёный. Нужен включённый режим разработчика (`DevToolsSecurity -enable`). Не проверены: матрица рантаймов и стресс-тесты, расширение VS Code; в CI задача выключена — полный прогон истощает hosted runner |

@@ -2,7 +2,7 @@
 
   <!-- One version for everything that ships: the adapter, the .NET tool and (via build/set-version) the VS Code extension. -->
   <PropertyGroup>
-    <Version>0.1.0</Version>
+    <Version>0.1.1</Version>
     <Authors>dvislobokov</Authors>
     <Copyright>Copyright (c) 2026 dvislobokov and dotnet-debugger contributors</Copyright>
     <PackageLicenseExpression>MIT</PackageLicenseExpression>

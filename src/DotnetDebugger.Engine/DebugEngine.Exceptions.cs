@@ -161,6 +161,7 @@ public sealed partial class DebugEngine
         lock (_lock)
         {
             RequireStopped();
+            RequireThread(threadId); // ReadException swallows what goes wrong, an unknown thread included
             string breakMode = _exceptionStops.GetValueOrDefault(threadId, "always");
             return ReadException(() => RequireThread(threadId).CurrentException, breakMode, 0, threadId);
         }

@@ -236,6 +236,7 @@ public sealed class SetExpressionResponseBody
     public string Value { get; set; } = "";
     public string? Type { get; set; }
     public int VariablesReference { get; set; }
+    public int? NamedVariables { get; set; }
     public int? IndexedVariables { get; set; }
 }
 
@@ -356,6 +357,8 @@ public sealed class Scope
     public string Name { get; set; } = "";
     public string? PresentationHint { get; set; }
     public int VariablesReference { get; set; }
+    public int? NamedVariables { get; set; }
+    public int? IndexedVariables { get; set; }
     public bool Expensive { get; set; }
 }
 

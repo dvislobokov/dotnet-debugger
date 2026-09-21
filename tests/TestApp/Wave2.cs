@@ -136,7 +136,7 @@ public static class Wave2
     {
         while (!StopWorkers)
         {
-            Interlocked.Increment(ref counter);
+            Interlocked.Increment(ref counter); // bp:workerCount
             Thread.Sleep(5);
         }
     }

@@ -26,10 +26,26 @@ Fixes for the findings of a black-box DAP probe of 0.1.0 (regression tests: `Fin
   `$exception` can be evaluated in an `[External Code]` frame; invalid hit conditions and lines <= 0 are rejected with
   a message; a condition that is not `bool` is reported; a missing `cwd` fails the launch on every platform.
 - Linux/macOS: the debuggee no longer outlives a killed adapter.
+- macOS: the whole test suite passes on a local machine (`build/test-on-macos.sh` runs it class by class and packs the
+  logs for analysis).
 - Expressions: optional parameters are filled in, enum arguments (`perm.HasFlag(Perm.Write)`), delegates are invoked
   (`twice(4)`), tuple element names of locals (`tuple.Name`), `checked` / `unchecked`, pointer dereference (`*p`),
   type parameters of the current frame (`typeof(T)`, `default(T)`), `null` for `Nullable<T>` and whole structs in
   assignments and `setVariable`, the element count format specifier (`numbers,5`).
+
+Fixes for the DAP client of the JetBrains platform (IntelliJ IDEA 2026.1; regression tests: `IntelliJClientTests`).
+
+- `variables` with `filter: "named"` returns the named children only and does not read a single element (it used to
+  answer with all of them: 10 MB and seconds for a large list). Values with elements report `namedVariables` next to
+  `indexedVariables` (`variables`, `evaluate`, `setVariable`, `setExpression`), and the locals scope its `namedVariables`.
+- `threads` is sorted by thread id: that client looks threads up with a binary search over the response as it is.
+- `exceptionInfo` and `goto` for an unknown thread fail with `Unknown thread N.` like the steps and `stackTrace` do;
+  a `goto` that cannot be done is refused in its response (it used to be answered with success and then with an error).
+- Ending a session no longer logs `ICorDebugProcess.Terminate failed`: the process is terminated once, not again by
+  `disconnect` after `terminate` or when the adapter shuts down; a debuggee that is still there after that is killed.
+- `exited` reports -1 (137 on Linux/macOS) instead of 0 for a debuggee that was terminated by the debugger.
+- The `continued` event is sent when the debuggee keeps running after an evaluation because the runtime could not be
+  stopped again. `continue` keeps ignoring its `threadId`: all threads continue, `allThreadsContinued: true`.
 
 ## 0.1.0 — unreleased
 

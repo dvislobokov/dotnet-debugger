@@ -228,6 +228,13 @@ public sealed partial class DebugEngine : IEvalHost
             {
                 Log?.Invoke("Failed to resume threads after an evaluation: " + e.Message);
             }
+
+            // The client believes the debuggee is stopped. It is not if stopping it again failed (Synchronize threw).
+            if (!_stopped && !_processExited && _process != null)
+            {
+                ClearStopState();
+                Task.Run(() => Continued?.Invoke(threadId));
+            }
         }
     }
 

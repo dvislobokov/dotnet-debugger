@@ -49,6 +49,7 @@ internal sealed class DebugAdapter : IDisposable
             ThreadId = stop.ThreadId,
             HitBreakpointIds = stop.BreakpointIds,
         });
+        engine.Continued += threadId => _connection.SendEvent("continued", new ContinuedEventBody { ThreadId = threadId });
         engine.Output += (category, text) => _connection.SendEvent("output", new OutputEventBody { Category = category, Output = text });
         engine.ThreadChanged += (id, started) =>
             _connection.SendEvent("thread", new ThreadEventBody { Reason = started ? "started" : "exited", ThreadId = id });
@@ -310,7 +311,8 @@ internal sealed class DebugAdapter : IDisposable
                     Value = variable.Value,
                     Type = variable.Type,
                     VariablesReference = handle,
-                    IndexedVariables = handle != 0 && variable.IndexedChildren > 0 ? variable.IndexedChildren : null,
+                    IndexedVariables = Indexed(variable, handle),
+                    NamedVariables = Named(variable, handle),
                 };
             }
 
@@ -332,8 +334,8 @@ internal sealed class DebugAdapter : IDisposable
             case "goto":
             {
                 var args = request.GetArguments<GotoArguments>()!;
-                // the "stopped" event has to follow the response
-                _afterResponse = () => _engine.Goto(args.ThreadId, args.TargetId);
+                // the "stopped" event has to follow the response; what is wrong with the request belongs into the response
+                _afterResponse = _engine.Goto(args.ThreadId, args.TargetId);
                 return null;
             }
 
@@ -371,7 +373,9 @@ internal sealed class DebugAdapter : IDisposable
             case "threads":
                 return new ThreadsResponseBody
                 {
-                    Threads = _engine.GetThreads().Select(t => new Protocol.Thread { Id = t.Id, Name = t.Name }).ToArray(),
+                    // Sorted: the specification promises no order, but the client of the JetBrains platform looks
+                    // threads up with a binary search over this list as it comes.
+                    Threads = _engine.GetThreads().OrderBy(t => t.Id).Select(t => new Protocol.Thread { Id = t.Id, Name = t.Name }).ToArray(),
                 };
 
             case "stackTrace":
@@ -386,21 +390,25 @@ internal sealed class DebugAdapter : IDisposable
 
             case "scopes":
             {
-                int handle = _engine.GetLocalsHandle(request.GetArguments<ScopesArguments>()!.FrameId);
+                int handle = _engine.GetLocalsHandle(request.GetArguments<ScopesArguments>()!.FrameId, out int? count);
                 return new ScopesResponseBody
                 {
-                    Scopes = handle == 0 ? [] : [new Scope { Name = "Locals", PresentationHint = "locals", VariablesReference = handle }],
+                    Scopes = handle == 0 ? [] : [new Scope { Name = "Locals", PresentationHint = "locals", VariablesReference = handle, NamedVariables = count }],
                 };
             }
 
             case "variables":
             {
                 var args = request.GetArguments<VariablesArguments>()!;
-                bool indexedOnly = args.Filter == "indexed";
+                VariableFilter filter = args.Filter switch
+                {
+                    "indexed" => VariableFilter.Indexed,
+                    "named" => VariableFilter.Named,
+                    _ => VariableFilter.All,
+                };
                 return new VariablesResponseBody
                 {
-                    Variables = _engine.GetVariables(args.VariablesReference, args.Start ?? 0, args.Count ?? 0, args.Format?.Hex == true)
-                        .Where(v => !indexedOnly || v.Variable.Name.StartsWith('['))
+                    Variables = _engine.GetVariables(args.VariablesReference, args.Start ?? 0, args.Count ?? 0, args.Format?.Hex == true, filter)
                         .Select(v => new Variable
                         {
                             Name = v.Variable.Name,
@@ -409,7 +417,8 @@ internal sealed class DebugAdapter : IDisposable
                             EvaluateName = v.Variable.EvaluateName,
                             PresentationHint = v.Variable.IsLazy ? new VariablePresentationHint { Lazy = true } : null,
                             VariablesReference = v.Handle,
-                            IndexedVariables = v.Handle != 0 && v.Variable.IndexedChildren > 0 ? v.Variable.IndexedChildren : null,
+                            IndexedVariables = Indexed(v.Variable, v.Handle),
+                            NamedVariables = Named(v.Variable, v.Handle),
                         })
                         .ToArray(),
                 };
@@ -425,7 +434,8 @@ internal sealed class DebugAdapter : IDisposable
                     Result = variable.Value,
                     Type = variable.Type,
                     VariablesReference = handle,
-                    IndexedVariables = handle != 0 && variable.IndexedChildren > 0 ? variable.IndexedChildren : null,
+                    IndexedVariables = Indexed(variable, handle),
+                    NamedVariables = Named(variable, handle),
                 };
             }
 
@@ -438,7 +448,8 @@ internal sealed class DebugAdapter : IDisposable
                     Value = variable.Value,
                     Type = variable.Type,
                     VariablesReference = handle,
-                    IndexedVariables = handle != 0 && variable.IndexedChildren > 0 ? variable.IndexedChildren : null,
+                    IndexedVariables = Indexed(variable, handle),
+                    NamedVariables = Named(variable, handle),
                 };
             }
 
@@ -592,6 +603,10 @@ internal sealed class DebugAdapter : IDisposable
         StackTrace = data.StackTrace,
         InnerException = data.Inner == null ? null : [ToExceptionDetails(data.Inner)],
     };
+
+    // The two numbers a client decides about paging by; they only make sense together, for values that have elements.
+    private static int? Indexed(VariableInfo variable, int handle) => handle != 0 && variable.IndexedChildren > 0 ? variable.IndexedChildren : null;
+    private static int? Named(VariableInfo variable, int handle) => handle != 0 && variable.IndexedChildren > 0 ? variable.NamedChildren : null;
 
     private int ColumnFromClient(int column) => _clientColumnsStartAt1 ? column : column + 1;
     private int LineFromClient(int line) => _clientLinesStartAt1 ? line : line + 1;

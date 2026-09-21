@@ -102,14 +102,16 @@ public sealed partial class DebugEngine
         }
     }
 
-    public void Goto(int threadId, int targetId)
+    /// <returns>Announces the new location ("stopped"); for the caller to invoke once the request has been answered.</returns>
+    public Action Goto(int threadId, int targetId)
     {
         lock (_lock)
         {
             CorDebugProcess process = RequireStopped();
+            CorDebugThread thread = RequireThread(threadId);
             if (!_gotoTargets.TryGetValue(targetId, out var target))
                 throw new DebuggerException("Unknown goto target.");
-            if (RequireThread(threadId).ActiveFrame is not CorDebugILFrame frame
+            if (thread.ActiveFrame is not CorDebugILFrame frame
                 || frame.Function.Token.Value != (uint)target.Location.MethodToken
                 || frame.Function.Module.BaseAddress.Value != target.Module.Module.BaseAddress.Value)
             {
@@ -130,7 +132,7 @@ public sealed partial class DebugEngine
             _threadFrames.Clear();
             _returnValue = null;
         }
-        Stopped?.Invoke(new StopInfo("goto", threadId));
+        return () => Stopped?.Invoke(new StopInfo("goto", threadId));
     }
 
     // ---------------------------------------------------------------- exception filter conditions

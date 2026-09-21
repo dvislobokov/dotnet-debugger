@@ -12,6 +12,9 @@ public sealed partial class DebugEngine
     {
         /// <summary>The value of a lazy variable: asking for it is the user's decision to run its getter.</summary>
         public bool IsLazy { get; init; }
+
+        /// <summary>The children are elements ("[0]") and what goes with them: the client may ask for either kind alone.</summary>
+        public bool HasIndexedChildren { get; init; }
         public Func<int, int, List<VariableInfo>> Provider { get; } = provider;
         public InspectionContext? Context { get; } = context;
         public List<VariableInfo>? LastChildren { get; set; }
@@ -241,8 +244,12 @@ public sealed partial class DebugEngine
     // ---------------------------------------------------------------- variables
 
     /// <summary>Returns the variables handle of the frame's locals, or 0 if the frame has none.</summary>
-    public int GetLocalsHandle(int frameId)
+    public int GetLocalsHandle(int frameId) => GetLocalsHandle(frameId, out _);
+
+    /// <param name="count">How many variables the scope has; null if finding out is not cheap.</param>
+    public int GetLocalsHandle(int frameId, out int? count)
     {
+        count = null;
         lock (_lock)
         {
             RequireStopped();
@@ -262,6 +269,7 @@ public sealed partial class DebugEngine
             if (frame == null)
                 return 0;
             var context = new InspectionContext(frame.ThreadId, frame);
+            count = TryCountLocals(frame);
             return RegisterContainer((_, _) => GetLocals(frame, context, _requestOptions), context);
         }
     }
@@ -269,18 +277,20 @@ public sealed partial class DebugEngine
     // Only the locals scope consults this: everything below it inherits the options it was described with.
     private DisplayOptions? _requestOptions;
 
-    private int RegisterContainer(Func<int, int, List<VariableInfo>> provider, InspectionContext? context, bool isLazy = false)
+    private int RegisterContainer(Func<int, int, List<VariableInfo>> provider, InspectionContext? context, bool isLazy = false, bool hasIndexedChildren = false)
     {
         int handle = ++_nextHandle;
-        _variableHandles[handle] = new VariableContainer(provider, context) { IsLazy = isLazy };
+        _variableHandles[handle] = new VariableContainer(provider, context) { IsLazy = isLazy, HasIndexedChildren = hasIndexedChildren };
         return handle;
     }
 
     private (VariableInfo Variable, int Handle) WithHandle(VariableInfo variable) =>
-        (variable, variable.ChildrenProvider is { } provider ? RegisterContainer(provider, variable.Context, variable.IsLazy) : 0);
+        (variable, variable.ChildrenProvider is { } provider ? RegisterContainer(provider, variable.Context, variable.IsLazy, variable.IndexedChildren > 0) : 0);
 
     /// <param name="hex">Show integers in hexadecimal (the client's "value format").</param>
-    public IReadOnlyList<(VariableInfo Variable, int Handle)> GetVariables(int handle, int start = 0, int count = 0, bool hex = false)
+    /// <param name="filter">Which children the client wants. Elements it did not ask for are not even read.</param>
+    public IReadOnlyList<(VariableInfo Variable, int Handle)> GetVariables(int handle, int start = 0, int count = 0, bool hex = false,
+        VariableFilter filter = VariableFilter.All)
     {
         lock (_lock)
         {
@@ -293,7 +303,15 @@ public sealed partial class DebugEngine
             _explicitExpansion = container.IsLazy;
             try
             {
-                List<VariableInfo> children = container.Provider(start, count);
+                List<VariableInfo> children;
+                if (!container.HasIndexedChildren)
+                    children = filter == VariableFilter.Indexed ? [] : container.Provider(start, count); // all children are named ones
+                else if (filter == VariableFilter.Named)
+                    children = container.Provider(0, ValueInspector.NamedOnly);
+                else if (filter == VariableFilter.Indexed)
+                    children = container.Provider(start, count).Where(v => v.Name.StartsWith('[') && v.Name != "[...]").ToList();
+                else
+                    children = container.Provider(start, count);
                 container.LastChildren = children;
                 return children.Select(WithHandle).ToList();
             }
@@ -301,6 +319,25 @@ public sealed partial class DebugEngine
             {
                 _explicitExpansion = false;
             }
+        }
+    }
+
+    // the same rows as GetLocals, without describing any value
+    private int? TryCountLocals(FrameRef frame)
+    {
+        try
+        {
+            int count = GetLocalRefs(frame).Count;
+            if (_returnValues.Count > 0 && frame == TopFrame(frame.ThreadId))
+                count += _returnValues.Count(r => r.ThreadId == frame.ThreadId);
+            Func<CorDebugValue?> exception = () => RequireThread(frame.ThreadId).CurrentException;
+            if (TryGet(exception) is { } current && ValueInspector.Unwrap(current, out bool isNull) != null && !isNull)
+                count++;
+            return count;
+        }
+        catch (Exception e) when (e is not OperationCanceledException)
+        {
+            return null;
         }
     }
 
@@ -320,7 +357,7 @@ public sealed partial class DebugEngine
             result.Add(new VariableInfo
             {
                 Name = name, Value = value.Value, Type = value.Type, EvaluateName = "$ReturnValue", Context = context,
-                IndexedChildren = value.IndexedChildren, ChildrenProvider = value.ChildrenProvider,
+                IndexedChildren = value.IndexedChildren, NamedChildren = value.NamedChildren, ChildrenProvider = value.ChildrenProvider,
             });
         }
 
@@ -543,7 +580,7 @@ public sealed partial class DebugEngine
             return WithHandle(new VariableInfo
             {
                 Name = name, Value = updated.Value, Type = updated.Type, EvaluateName = variable.EvaluateName, Context = updated.Context,
-                IndexedChildren = updated.IndexedChildren, ChildrenProvider = updated.ChildrenProvider,
+                IndexedChildren = updated.IndexedChildren, NamedChildren = updated.NamedChildren, ChildrenProvider = updated.ChildrenProvider,
             });
         }
     }

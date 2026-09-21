@@ -19,7 +19,8 @@ internal sealed class DapClient : IDisposable
     private readonly StringBuilder _stderr = new();
     private readonly BlockingCollection<TerminalSession> _terminals = [];
 
-    public DapClient(TimeSpan? timeout = null)
+    /// <param name="logFile">Where the adapter writes its trace (for tests that assert on it); the last --log wins.</param>
+    public DapClient(TimeSpan? timeout = null, string? logFile = null)
     {
         Timeout = timeout ?? TimeSpan.FromSeconds(30);
         // DOTNET_DEBUGGER_ADAPTER points the suite at a published adapter (an executable or a dll)
@@ -44,6 +45,9 @@ internal sealed class DapClient : IDisposable
             }
             startInfo.ArgumentList.Add("--log=" + log);
         }
+
+        if (logFile != null)
+            startInfo.ArgumentList.Add("--log=" + logFile);
 
         _adapter = Process.Start(startInfo)!;
         _adapter.ErrorDataReceived += (_, e) =>

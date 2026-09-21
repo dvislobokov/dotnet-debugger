@@ -1,5 +1,13 @@
 namespace DotnetDebugger.Engine;
 
+/// <summary>The "filter" of a DAP variables request.</summary>
+public enum VariableFilter
+{
+    All,
+    Named,
+    Indexed,
+}
+
 public sealed class LaunchOptions
 {
     public required string Program { get; init; }

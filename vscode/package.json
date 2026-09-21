@@ -2,7 +2,7 @@
   "name": "dotnet-debugger",
   "displayName": ".NET Debugger (dotnet-debugger)",
   "description": "Debug .NET applications with the open source dotnet-debugger DAP adapter.",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "publisher": "dvislobokov",
   "license": "MIT",
   "icon": "icon.png",

@@ -23,6 +23,9 @@ public sealed class VariableInfo
     public string? Type { get; init; }
     public string? EvaluateName { get; init; }
     public int IndexedChildren { get; init; }
+
+    /// <summary>Children that are not elements ("Raw View"); only told apart for values that have elements.</summary>
+    public int NamedChildren { get; init; }
     public bool HasChildren => ChildrenProvider != null;
 
     /// <summary>
@@ -96,6 +99,12 @@ internal sealed partial class ValueInspector
     /// </summary>
     internal const int MaxUnpagedChildren = 10_000;
 
+    /// <summary>
+    /// Passed as "count" to a children provider: no elements at all, only what goes with them. A client that pages
+    /// the elements itself asks for those first, and must not pay for elements it did not ask for.
+    /// </summary>
+    internal const int NamedOnly = -1;
+
     private readonly Func<CorDebugModule, ModuleMetadata?> _getMetadata;
     private readonly IEvalHost _host;
 
@@ -118,9 +127,11 @@ internal sealed partial class ValueInspector
                 ? new VariableInfo
                 {
                     Name = info.Name, Value = info.Value, Type = info.Type, EvaluateName = info.EvaluateName, Location = info.Location,
-                    Context = info.Context, IndexedChildren = limit,
+                    Context = info.Context, IndexedChildren = limit, NamedChildren = info.NamedChildren,
                     ChildrenProvider = (start, count) =>
                     {
+                        if (count == NamedOnly)
+                            return all(0, NamedOnly);
                         int first = Math.Max(0, start), take = count > 0 ? Math.Min(count, limit - first) : limit - first;
                         return take <= 0 ? [] : all(first, take);
                     },
@@ -232,7 +243,7 @@ internal sealed partial class ValueInspector
             return new VariableInfo
             {
                 Name = name, Value = inner.Value, Type = typeName, EvaluateName = evaluateName, Location = getter, Context = context,
-                IndexedChildren = inner.IndexedChildren, ChildrenProvider = inner.ChildrenProvider,
+                IndexedChildren = inner.IndexedChildren, NamedChildren = inner.NamedChildren, ChildrenProvider = inner.ChildrenProvider,
             };
         }
 
@@ -267,7 +278,7 @@ internal sealed partial class ValueInspector
         return new VariableInfo
         {
             Name = name, Value = display, Type = typeName, EvaluateName = evaluateName, Location = getter, Context = context,
-            IndexedChildren = indexed,
+            IndexedChildren = indexed, NamedChildren = indexed > 0 ? 1 : 0, // Raw View
             ChildrenProvider = (start, n) => GetObjectChildren(stable, evaluateName, context, start, n, rawView, childOptions),
         };
     }
@@ -411,6 +422,8 @@ internal sealed partial class ValueInspector
         int start, int count, DisplayOptions options)
     {
         var result = new List<VariableInfo>();
+        if (count == NamedOnly)
+            return result;
         CorDebugValue? target = getter() is { } v ? Unwrap(v, out _) : null;
         if (target == null)
             return result;
@@ -448,7 +461,7 @@ internal sealed partial class ValueInspector
 
     private static void AddNoteAboutTheRest(List<VariableInfo> result, int count, int end, int total)
     {
-        if (count <= 0 && end < total)
+        if (count == 0 && end < total)
             result.Add(new VariableInfo { Name = "[...]", Value = $"{total - end} more elements are not shown: they have to be requested in ranges (start, count)." });
     }
 
@@ -560,7 +573,7 @@ internal sealed partial class ValueInspector
         {
             try
             {
-                (int first, int end) = PageOf(start, count, collection.Count);
+                (int first, int end) = count == NamedOnly ? (0, 0) : PageOf(start, count, collection.Count);
                 List<VariableInfo>? primitives = null;
                 if (collection.Backing is { } backing && backing.Array() is { } backingValue && Unwrap(backingValue, out _) is { } backingArray)
                 {
@@ -730,7 +743,7 @@ internal sealed partial class ValueInspector
             return new VariableInfo
             {
                 Name = "Results View", Value = "Expanding the Results View enumerated the sequence", Context = context,
-                IndexedChildren = elements.IndexedChildren, ChildrenProvider = elements.ChildrenProvider,
+                IndexedChildren = elements.IndexedChildren, NamedChildren = elements.NamedChildren, ChildrenProvider = elements.ChildrenProvider,
             };
         }
         catch (Exception e) when (e is EvalFailedException or DebuggerException)
@@ -781,7 +794,7 @@ internal sealed partial class ValueInspector
         return new VariableInfo
         {
             Name = info.Name, Value = info.Value, Type = info.Type, EvaluateName = info.EvaluateName,
-            IndexedChildren = info.IndexedChildren, ChildrenProvider = info.ChildrenProvider, Context = context,
+            IndexedChildren = info.IndexedChildren, NamedChildren = info.NamedChildren, ChildrenProvider = info.ChildrenProvider, Context = context,
         };
     }
 
