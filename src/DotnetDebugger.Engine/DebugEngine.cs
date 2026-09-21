@@ -46,6 +46,7 @@ public sealed partial class DebugEngine : IDisposable
     private readonly ValueInspector _values;
     private readonly Dictionary<ulong, LoadedModule> _modules = [];
     private readonly ManualResetEventSlim _processWatcherDone = new();
+    private bool _processWatcherStarted;
     private readonly List<Task> _outputPumps = [];
 
     private SymbolLocator? _symbolLocator;
@@ -153,21 +154,63 @@ public sealed partial class DebugEngine : IDisposable
         }
     }
 
+    private static readonly TimeSpan AttachTimeout = TimeSpan.FromSeconds(20);
+    private TaskCompletionSource<Exception?>? _attachOutcome;
+
     public void Attach(int processId, bool justMyCode = true, IReadOnlyDictionary<string, string>? sourceFileMap = null)
     {
+        TaskCompletionSource<Exception?> outcome;
         lock (_lock)
         {
             if (_processId != 0)
                 throw new DebuggerException("A debuggee is already running.");
+            _dbgShim ??= LoadDbgShim();
+            AttachChecks.Verify(processId, _dbgShim, Log);
+
             _justMyCode = justMyCode;
             SetSourceFileMap(sourceFileMap);
             _isAttach = true;
             _resumed = true;
-            _dbgShim = LoadDbgShim();
             _processId = processId;
-            StartProcessWatcher();
-            _unregisterToken = RegisterForRuntimeStartup(processId);
+            _attachOutcome = outcome = new TaskCompletionSource<Exception?>(TaskCreationOptions.RunContinuationsAsynchronously);
+            try
+            {
+                _unregisterToken = RegisterForRuntimeStartup(processId);
+            }
+            catch (Exception e)
+            {
+                // on Unix this is where a second debugger is turned away
+                outcome.TrySetResult(e);
+            }
         }
+
+        // The runtime is there (checked), so the callback is due at once. Whether the attach worked is only known then.
+        Exception? failure = outcome.Task.Wait(AttachTimeout)
+            ? outcome.Task.Result
+            : new DebuggerException("the runtime did not answer");
+        lock (_lock)
+        {
+            _attachOutcome = null;
+            if (failure == null)
+            {
+                StartProcessWatcher();
+                return;
+            }
+            try
+            {
+                if (_unregisterToken != IntPtr.Zero)
+                    _dbgShim.UnregisterForRuntimeStartup(_unregisterToken);
+            }
+            catch (Exception e)
+            {
+                Log?.Invoke("UnregisterForRuntimeStartup failed: " + e.Message);
+            }
+            _unregisterToken = IntPtr.Zero;
+            _processId = 0;
+            _isAttach = false;
+            _resumed = false;
+        }
+        throw new DebuggerException($"Cannot attach to process {processId}: {ErrorText.Describe(failure)}");
     }
 
     /// <summary>Signals that initial breakpoints are in place and the debuggee may run.</summary>
@@ -237,7 +280,10 @@ public sealed partial class DebugEngine : IDisposable
         try
         {
             if (corDebug == null || hr != HRESULT.S_OK)
-                throw new DebuggerException($"The .NET runtime could not be debugged ({hr}).");
+                throw new DebuggerException($"The .NET runtime could not be debugged: {ErrorText.Explain(hr.ToString())}.");
+            // the debuggee waits for this callback to return: its console exists, managed code has not run yet
+            if (_launched != null)
+                ConsoleCodePage.SwitchToUtf8(_processId, Log);
             lock (_lock)
             {
                 _corDebug = corDebug;
@@ -245,11 +291,18 @@ public sealed partial class DebugEngine : IDisposable
                 corDebug.SetManagedHandler(_callback);
                 _process = corDebug.DebugActiveProcess(_processId, false);
             }
+            _attachOutcome?.TrySetResult(null);
         }
         catch (Exception e)
         {
             Log?.Invoke("Runtime startup failed: " + e);
-            Output?.Invoke("stderr", "Failed to start debugging: " + e.Message + Environment.NewLine);
+            // a process somebody else started stays alive; the attach request reports the failure
+            if (_attachOutcome is { } attach)
+            {
+                attach.TrySetResult(e);
+                return;
+            }
+            Output?.Invoke("stderr", "Failed to start debugging: " + ErrorText.Describe(e) + Environment.NewLine);
             KillProcess();
         }
     }
@@ -294,6 +347,7 @@ public sealed partial class DebugEngine : IDisposable
             return;
         }
 
+        _processWatcherStarted = true;
         bool isOurChild = !OperatingSystem.IsWindows() && _launched is { ExitCode: null };
         Task.Factory.StartNew(() =>
         {
@@ -357,6 +411,10 @@ public sealed partial class DebugEngine : IDisposable
         // Whoever started the process knows best: for a process that is not our child Unix reports no (or a bogus 0) exit code.
         if (_externalExitCode is { } external && external.Wait(TimeSpan.FromSeconds(2)) && external.Result is { } reported)
             exitCode = reported;
+        // On Windows the debugging pipeline is the native debugger of the process: when the exception arrives there
+        // unhandled, it ends the process itself, with code 0. Without a debugger the same death is 0xE0434352.
+        if (OperatingSystem.IsWindows() && _diedOfUnhandledException && exitCode is null or 0)
+            exitCode = unchecked((int)0xE0434352);
         Exited?.Invoke(exitCode ?? 0);
     }
 
@@ -424,8 +482,8 @@ public sealed partial class DebugEngine : IDisposable
     /// </summary>
     private void Synchronize(CorDebugProcess process)
     {
-        const string Message = "The debuggee cannot be stopped: a thread is running a loop the runtime cannot interrupt " +
-            "(a limitation of .NET 8 on Linux and macOS). The session can only be terminated.";
+        const string Message = "The debuggee cannot be stopped: the runtime did not suspend its threads in time. The usual cause is a thread " +
+            "in a loop without calls or allocations, which runtimes before .NET 9 cannot interrupt on Linux and macOS. The session can only be terminated.";
         if (_cannotSynchronize)
             throw new DebuggerException(Message);
         Task stop = Task.Run(() => process.Stop(0));
@@ -479,7 +537,8 @@ public sealed partial class DebugEngine : IDisposable
             _unregisterToken = IntPtr.Zero;
         }
 
-        _processWatcherDone.Wait(TimeSpan.FromSeconds(3));
+        if (_processWatcherStarted)
+            _processWatcherDone.Wait(TimeSpan.FromSeconds(3));
         lock (_lock)
         {
             try
@@ -826,6 +885,19 @@ public sealed partial class DebugEngine : IDisposable
     private CorDebugProcess RequireProcess() =>
         _process ?? throw new DebuggerException("The debuggee is not running.");
 
+    private CorDebugThread RequireThread(int threadId)
+    {
+        CorDebugProcess process = RequireProcess();
+        try
+        {
+            return process.GetThread(threadId);
+        }
+        catch (DebugException)
+        {
+            throw new DebuggerException($"Unknown thread {threadId}.");
+        }
+    }
+
     private CorDebugProcess RequireStopped()
     {
         CorDebugProcess process = RequireProcess();
@@ -838,11 +910,13 @@ public sealed partial class DebugEngine : IDisposable
     {
         _stopped = false;
         _frames.Clear();
+        _externalFrames.Clear();
         _threadFrames.Clear();
         _variableHandles.Clear();
         _logicalFrames.Clear();
         _exceptionStops.Clear();
         _returnValue = null;
+        _implicitEvalTimedOut = false;
         ReleaseStrongHandles();
     }
 

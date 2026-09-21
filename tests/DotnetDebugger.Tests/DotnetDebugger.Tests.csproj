@@ -25,6 +25,7 @@
     <ProjectReference Include="..\TestApp\TestApp.csproj" ReferenceOutputAssembly="false" />
     <ProjectReference Include="..\EmbeddedApp\EmbeddedApp.csproj" ReferenceOutputAssembly="false" />
     <ProjectReference Include="..\SymbolApp\SymbolApp.csproj" ReferenceOutputAssembly="false" />
+    <ProjectReference Include="..\AsyncMainApp\AsyncMainApp.csproj" ReferenceOutputAssembly="false" />
   </ItemGroup>
 
 </Project>

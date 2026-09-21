@@ -66,10 +66,20 @@ internal sealed partial class ModuleMetadata
     public bool IsEnum(int typeDefToken)
     {
         TypeDefinition type = _md.GetTypeDefinition((TypeDefinitionHandle)MetadataTokens.Handle(typeDefToken));
-        if (type.BaseType.Kind != HandleKind.TypeReference)
-            return false;
-        TypeReference baseType = _md.GetTypeReference((TypeReferenceHandle)type.BaseType);
-        return _md.GetString(baseType.Name) == "Enum" && _md.GetString(baseType.Namespace) == "System";
+        if (type.BaseType.IsNil)
+            return false; // an interface
+        switch (type.BaseType.Kind)
+        {
+            case HandleKind.TypeReference:
+                TypeReference reference = _md.GetTypeReference((TypeReferenceHandle)type.BaseType);
+                return _md.GetString(reference.Name) == "Enum" && _md.GetString(reference.Namespace) == "System";
+            case HandleKind.TypeDefinition:
+                // the enums of the core library itself: System.Enum lives in the same module
+                TypeDefinition definition = _md.GetTypeDefinition((TypeDefinitionHandle)type.BaseType);
+                return _md.GetString(definition.Name) == "Enum" && _md.GetString(definition.Namespace) == "System";
+            default:
+                return false;
+        }
     }
 
     public List<MethodDescription> GetMethods(int typeDefToken, string name)

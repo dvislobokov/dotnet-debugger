@@ -109,7 +109,7 @@ public sealed partial class DebugEngine
             CorDebugProcess process = RequireStopped();
             if (!_gotoTargets.TryGetValue(targetId, out var target))
                 throw new DebuggerException("Unknown goto target.");
-            if (process.GetThread(threadId).ActiveFrame is not CorDebugILFrame frame
+            if (RequireThread(threadId).ActiveFrame is not CorDebugILFrame frame
                 || frame.Function.Token.Value != (uint)target.Location.MethodToken
                 || frame.Function.Module.BaseAddress.Value != target.Module.Module.BaseAddress.Value)
             {
@@ -251,7 +251,7 @@ public sealed partial class DebugEngine
         lock (_lock)
         {
             CorDebugProcess process = RequireStopped();
-            process.GetThread(threadId).DebugState = frozen ? CorDebugThreadState.THREAD_SUSPEND : CorDebugThreadState.THREAD_RUN;
+            RequireThread(threadId).DebugState = frozen ? CorDebugThreadState.THREAD_SUSPEND : CorDebugThreadState.THREAD_RUN;
             if (frozen)
                 _frozenThreads.Add(threadId);
             else
@@ -266,7 +266,7 @@ public sealed partial class DebugEngine
         {
             try
             {
-                process.GetThread(threadId).DebugState = CorDebugThreadState.THREAD_SUSPEND;
+                RequireThread(threadId).DebugState = CorDebugThreadState.THREAD_SUSPEND;
             }
             catch (Exception)
             {

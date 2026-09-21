@@ -66,6 +66,9 @@ internal static class LaunchResolver
         string workingDirectory = args.Cwd ?? profile?.WorkingDirectory ?? defaultDirectory;
         if (!Path.IsPathRooted(workingDirectory))
             workingDirectory = Path.GetFullPath(Path.Combine(defaultDirectory, workingDirectory));
+        // checked here because the platforms disagree: Windows refuses to start the process, a Unix shell starts it elsewhere
+        if (!Directory.Exists(workingDirectory))
+            throw new DebuggerException($"The working directory '{workingDirectory}' does not exist.");
 
         return new ResolvedLaunch(Path.GetFullPath(program), arguments, workingDirectory, environment);
     }

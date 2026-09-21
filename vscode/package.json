@@ -245,6 +245,11 @@
                 "description": "Step over properties and operators when stepping in.",
                 "default": true
               },
+              "allowImplicitFuncEval": {
+                "type": "boolean",
+                "description": "Describe values by running code of the program: ToString(), [DebuggerDisplay], property getters. When false, objects show their type and fields, and properties are evaluated on demand.",
+                "default": true
+              },
               "sourceFileMap": {
                 "type": "object",
                 "additionalProperties": {

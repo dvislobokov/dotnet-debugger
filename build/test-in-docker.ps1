@@ -20,8 +20,9 @@ $image = 'dotnet-debugger-linux-tests'
 docker build -q -t $image -f (Join-Path $PSScriptRoot 'docker/linux-tests.Dockerfile') (Join-Path $PSScriptRoot 'docker') | Out-Null
 if ($LASTEXITCODE -ne 0) { throw 'docker build failed' }
 
-# A debugger needs ptrace, which the default container profile forbids.
-$arguments = @('run', '--rm', '--cap-add=SYS_PTRACE', '--security-opt', 'seccomp=unconfined', '-v', "${root}:/src:ro")
+# A debugger needs ptrace, which the default container profile forbids. The memory limit keeps a runaway test
+# (a million ICorDebugValue objects cost gigabytes) from taking the whole machine down.
+$arguments = @('run', '--rm', '-m', '6g', '--cap-add=SYS_PTRACE', '--security-opt', 'seccomp=unconfined', '-v', "${root}:/src:ro")
 if ($Matrix) { $arguments += @('-e', 'DOTNET_DEBUGGER_MATRIX=1') }
 if ($Stress) { $arguments += @('-e', 'DOTNET_DEBUGGER_STRESS=1') }
 $arguments += @($image, 'bash', '/src/build/test-in-docker.sh')

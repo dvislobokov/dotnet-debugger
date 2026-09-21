@@ -38,7 +38,8 @@ public sealed class VariableInfo
 }
 
 /// <summary>How values are rendered; set through format specifiers ("x,h") or the client's value format.</summary>
-internal sealed record DisplayOptions(bool Hex = false, bool NoQuotes = false, bool Raw = false)
+/// <param name="FullStrings">Do not shorten long strings (the client wants the value for the clipboard).</param>
+internal sealed record DisplayOptions(bool Hex = false, bool NoQuotes = false, bool Raw = false, bool FullStrings = false)
 {
     public static readonly DisplayOptions Default = new();
 
@@ -52,7 +53,8 @@ internal sealed class EvalFailedException(string message) : Exception(message);
 internal interface IEvalHost
 {
     /// <summary>Runs a function in the debuggee. Throws <see cref="EvalFailedException"/> if it throws or cannot run.</summary>
-    CorDebugValue? CallFunction(int threadId, CorDebugFunction function, CorDebugType[] typeArguments, CorDebugValue[] arguments);
+    /// <param name="isImplicit">Nobody asked for this call: it serves the display of a value, and gets less patience.</param>
+    CorDebugValue? CallFunction(int threadId, CorDebugFunction function, CorDebugType[] typeArguments, CorDebugValue[] arguments, bool isImplicit = false);
 
     /// <summary>Returns a getter that keeps working after the process was resumed (strong handle for heap objects).</summary>
     Func<CorDebugValue?> Stabilize(Func<CorDebugValue?> getter);
@@ -76,6 +78,9 @@ internal interface IEvalHost
 
     /// <summary>Runs the sequence to completion and returns its elements as an object[].</summary>
     Func<CorDebugValue?> EnumerateToArray(Func<CorDebugValue?> sequence, InspectionContext context);
+
+    /// <summary>Throws <see cref="OperationCanceledException"/> once the client has given up on the current request.</summary>
+    void ThrowIfCancelled();
 }
 
 /// <summary>Turns ICorDebugValue objects into display strings and child lists.</summary>
@@ -83,6 +88,12 @@ internal sealed partial class ValueInspector
 {
     private const int MaxStringLength = 4096;
     private const int MaxProperties = 200;
+
+    /// <summary>
+    /// Children returned for a request that names no range. A client that was told "indexedVariables: 1000000" is
+    /// expected to page; one that does not would otherwise wait minutes for an answer no UI can show.
+    /// </summary>
+    internal const int MaxUnpagedChildren = 10_000;
 
     private readonly Func<CorDebugModule, ModuleMetadata?> _getMetadata;
     private readonly IEvalHost _host;
@@ -98,13 +109,14 @@ internal sealed partial class ValueInspector
     public VariableInfo Describe(string name, Func<CorDebugValue?> getter, string? evaluateName, InspectionContext? context,
         DisplayOptions? options = null)
     {
+        _host.ThrowIfCancelled();
         try
         {
             return DescribeCore(name, getter, evaluateName, context, options ?? DisplayOptions.Default);
         }
-        catch (Exception e)
+        catch (Exception e) when (e is not OperationCanceledException)
         {
-            return new VariableInfo { Name = name, Value = $"<error: {e.Message}>", EvaluateName = evaluateName };
+            return new VariableInfo { Name = name, Value = $"<error: {ErrorText.Describe(e)}>", EvaluateName = evaluateName };
         }
     }
 
@@ -130,7 +142,7 @@ internal sealed partial class ValueInspector
         switch (target.Type)
         {
             case CorElementType.String:
-                return Leaf(FormatHost(ReadStringValue(target), options).Text, "string");
+                return Leaf(FormatHost(ReadStringValue(target, StringLimit(options)), options).Text, "string");
 
             case CorElementType.SZArray:
             case CorElementType.Array:
@@ -153,7 +165,7 @@ internal sealed partial class ValueInspector
 
             case CorElementType.Class when typeName == "System.String":
                 // a string reached through its address (ICorDebugProcess.GetObject) is typed as a plain object
-                return Leaf(FormatHost(ReadStringValue(target), options).Text, "string");
+                return Leaf(FormatHost(ReadStringValue(target, StringLimit(options)), options).Text, "string");
 
             case CorElementType.Class:
             case CorElementType.ValueType:
@@ -304,7 +316,7 @@ internal sealed partial class ValueInspector
         CorDebugValue thisArgument = target.Type == CorElementType.ValueType ? target : self;
         try
         {
-            string? text = ReadString(_host.CallFunction(context!.ThreadId, function, TypeArgumentsOf(declaring.Type), [thisArgument]));
+            string? text = ReadString(_host.CallFunction(context!.ThreadId, function, TypeArgumentsOf(declaring.Type), [thisArgument], isImplicit: true));
             return text == null ? null : "{" + text.ReplaceLineEndings(" ") + "}";
         }
         catch (EvalFailedException)
@@ -394,14 +406,114 @@ internal sealed partial class ValueInspector
         int total = array.Count;
         int rank = array.Rank;
         int[]? dims = rank > 1 ? array.GetDimensions(rank) : null;
-        int end = count > 0 ? Math.Min(total, start + count) : total;
-        for (int i = Math.Max(0, start); i < end; i++)
+        (int first, int end) = PageOf(start, count, total);
+        string Index(int position) => "[" + FormatIndex(position, dims) + "]";
+
+        if (TryReadPrimitiveElements(getter, array, first, end, 0, Index, evaluateName, context, options) is { } primitives)
         {
-            int position = i;
-            string index = "[" + FormatIndex(position, dims) + "]";
-            result.Add(Describe(index, () => ElementAt(getter, position), evaluateName == null ? null : evaluateName + index, context, options));
+            result = primitives;
         }
+        else
+        {
+            for (int i = first; i < end; i++)
+            {
+                int position = i;
+                string index = Index(position);
+                result.Add(Describe(index, () => ElementAt(getter, position), evaluateName == null ? null : evaluateName + index, context, options));
+            }
+        }
+        AddNoteAboutTheRest(result, count, end, total);
         return result;
+    }
+
+    /// <summary>The range [first, end) a request is answered with: what it asks for, or the first elements if it names no range.</summary>
+    private static (int First, int End) PageOf(int start, int count, int total)
+    {
+        int first = Math.Clamp(start, 0, total);
+        return (first, (int)Math.Min(total, first + (long)(count > 0 ? count : MaxUnpagedChildren)));
+    }
+
+    private static void AddNoteAboutTheRest(List<VariableInfo> result, int count, int end, int total)
+    {
+        if (count <= 0 && end < total)
+            result.Add(new VariableInfo { Name = "[...]", Value = $"{total - end} more elements are not shown: they have to be requested in ranges (start, count)." });
+    }
+
+    /// <summary>
+    /// Elements of an array of primitives, read from the debuggee's memory in one go. One ICorDebugValue per element
+    /// costs a round trip each, and memory in the debugging interface that is not given back before the debuggee
+    /// continues: for a million elements that is minutes and gigabytes.
+    /// </summary>
+    /// <param name="offset">Position in the array of the element called <paramref name="nameOf"/>(0).</param>
+    /// <returns>null if the elements are not primitives (or the layout could not be made sense of).</returns>
+    private List<VariableInfo>? TryReadPrimitiveElements(Func<CorDebugValue?> arrayGetter, CorDebugArrayValue array, int first, int end, int offset,
+        Func<int, string> nameOf, string? evaluateName, InspectionContext? context, DisplayOptions options)
+    {
+        if (end <= first)
+            return null;
+        try
+        {
+            CorElementType elementType = array.ElementType;
+            int size = elementType switch
+            {
+                CorElementType.Boolean or CorElementType.I1 or CorElementType.U1 => 1,
+                CorElementType.Char or CorElementType.I2 or CorElementType.U2 => 2,
+                CorElementType.I4 or CorElementType.U4 or CorElementType.R4 => 4,
+                CorElementType.I8 or CorElementType.U8 or CorElementType.R8 => 8,
+                _ => 0,
+            };
+            if (size == 0 || offset + end > array.Count)
+                return null;
+
+            CorDebugValue firstElement = array.GetElementAtPosition(offset + first);
+            if (firstElement.Type != elementType || firstElement.Size != size)
+                return null;
+            ulong address = firstElement.Address.Value;
+            if (address == 0)
+                return null;
+
+            var result = new List<VariableInfo>(end - first);
+            const int ChunkElements = 256 * 1024;
+            for (int chunkStart = first; chunkStart < end; chunkStart += ChunkElements)
+            {
+                _host.ThrowIfCancelled();
+                int chunkCount = Math.Min(ChunkElements, end - chunkStart);
+                byte[] bytes = _host.ReadMemory(address + (ulong)(chunkStart - first) * (ulong)size, chunkCount * size);
+                for (int i = 0; i < chunkCount; i++)
+                {
+                    ReadOnlySpan<byte> b = bytes.AsSpan(i * size, size);
+                    object value = elementType switch
+                    {
+                        CorElementType.Boolean => b[0] != 0,
+                        CorElementType.Char => (char)BitConverter.ToUInt16(b),
+                        CorElementType.I1 => (sbyte)b[0],
+                        CorElementType.U1 => b[0],
+                        CorElementType.I2 => BitConverter.ToInt16(b),
+                        CorElementType.U2 => BitConverter.ToUInt16(b),
+                        CorElementType.I4 => BitConverter.ToInt32(b),
+                        CorElementType.U4 => BitConverter.ToUInt32(b),
+                        CorElementType.I8 => BitConverter.ToInt64(b),
+                        CorElementType.U8 => BitConverter.ToUInt64(b),
+                        CorElementType.R4 => BitConverter.ToSingle(b),
+                        _ => BitConverter.ToDouble(b),
+                    };
+                    int index = chunkStart + i;
+                    int position = offset + index;
+                    string name = nameOf(index);
+                    (string text, string? type) = FormatHost(value, options);
+                    result.Add(new VariableInfo
+                    {
+                        Name = name, Value = text, Type = type, EvaluateName = evaluateName == null ? null : evaluateName + name,
+                        Location = () => ElementAt(arrayGetter, position), Context = context,
+                    });
+                }
+            }
+            return result;
+        }
+        catch (Exception e) when (e is not OperationCanceledException)
+        {
+            return null;
+        }
     }
 
     private static CorDebugValue? ElementAt(Func<CorDebugValue?> arrayGetter, int position)
@@ -435,9 +547,23 @@ internal sealed partial class ValueInspector
         {
             try
             {
-                IEnumerable<CollectionItem> items = collection.Items().Skip(Math.Max(0, start));
-                foreach (CollectionItem item in count > 0 ? items.Take(count) : items)
-                    result.Add(Describe(item.Name, item.Getter, evaluateName == null || !item.Addressable ? null : evaluateName + item.Name, context, options));
+                (int first, int end) = PageOf(start, count, collection.Count);
+                List<VariableInfo>? primitives = null;
+                if (collection.Backing is { } backing && backing.Array() is { } backingValue && Unwrap(backingValue, out _) is { } backingArray)
+                {
+                    primitives = TryReadPrimitiveElements(backing.Array, backingArray.As<CorDebugArrayValue>(), first, end, backing.Offset,
+                        i => "[" + i + "]", evaluateName, context, options);
+                }
+                if (primitives != null)
+                {
+                    result.AddRange(primitives);
+                }
+                else if (end > first)
+                {
+                    foreach (CollectionItem item in collection.Items().Skip(first).Take(end - first))
+                        result.Add(Describe(item.Name, item.Getter, evaluateName == null || !item.Addressable ? null : evaluateName + item.Name, context, options));
+                }
+                AddNoteAboutTheRest(result, count, end, collection.Count);
                 result.Add(new VariableInfo
                 {
                     Name = "Raw View", Value = "", Context = context,
@@ -445,7 +571,7 @@ internal sealed partial class ValueInspector
                 });
                 return result;
             }
-            catch (Exception)
+            catch (Exception e) when (e is not OperationCanceledException)
             {
                 result.Clear(); // unexpected layout: fall back to the plain view
             }
@@ -615,17 +741,18 @@ internal sealed partial class ValueInspector
             TypeLevel level = GetTypeLevels(selfTarget)[levelIndex];
             CorDebugFunction function = level.Type.Class.Module.GetFunctionFromToken(new mdMethodDef(property.GetterToken));
             CorDebugValue thisArgument = selfTarget.Type == CorElementType.ValueType ? selfTarget : self;
-            CorDebugValue? value = _host.CallFunction(context.ThreadId, function, TypeArgumentsOf(level.Type), [thisArgument]);
+            CorDebugValue? value = _host.CallFunction(context.ThreadId, function, TypeArgumentsOf(level.Type), [thisArgument], isImplicit: true);
             return DescribeResult(property.Name, value, evaluateName, context, options);
         }
         catch (EvalFailedException e)
         {
-            evaluationBroken = e.Message.Contains("timed out", StringComparison.Ordinal) || e.Message.Contains("not possible", StringComparison.Ordinal);
+            // after a timeout the host stops evaluating implicitly, which turns the remaining properties into lazy ones
+            evaluationBroken = e.Message.Contains("not possible", StringComparison.Ordinal);
             return new VariableInfo { Name = property.Name, Value = "<" + e.Message + ">" };
         }
         catch (Exception e)
         {
-            return new VariableInfo { Name = property.Name, Value = $"<error: {e.Message}>" };
+            return new VariableInfo { Name = property.Name, Value = $"<error: {ErrorText.Describe(e)}>" };
         }
     }
 
@@ -694,7 +821,9 @@ internal sealed partial class ValueInspector
     /// <param name="Addressable">Whether "collection" + Name is a valid expression for the item (true for indexers).</param>
     private sealed record CollectionItem(string Name, Func<CorDebugValue?> Getter, bool Addressable = true);
 
-    private sealed record CollectionView(int Count, Func<IEnumerable<CollectionItem>> Items);
+    /// <param name="Items">All items, in order. Skipping must be cheap: requests page deep into large collections.</param>
+    /// <param name="Backing">The array the items "[i]" live in (item i at Offset + i), where it is that simple.</param>
+    private sealed record CollectionView(int Count, Func<IEnumerable<CollectionItem>> Items, (Func<CorDebugValue?> Array, int Offset)? Backing = null);
 
     private const string Generic = "System.Collections.Generic.";
 
@@ -713,7 +842,8 @@ internal sealed partial class ValueInspector
         if (typeName.StartsWith(Generic + "List<", StringComparison.Ordinal))
         {
             int size = Int("_size");
-            return new CollectionView(size, () => Enumerable.Range(0, size).Select(i => Indexed(i, () => ElementAt(() => Field("_items"), i))));
+            return new CollectionView(size, () => Enumerable.Range(0, size).Select(i => Indexed(i, () => ElementAt(() => Field("_items"), i))),
+                (() => Field("_items"), 0));
         }
         if (typeName.StartsWith(Generic + "Stack<", StringComparison.Ordinal))
         {
@@ -729,12 +859,14 @@ internal sealed partial class ValueInspector
         if (typeName.StartsWith("System.ArraySegment<", StringComparison.Ordinal))
         {
             int offset = Int("_offset"), size = Int("_count");
-            return new CollectionView(size, () => Enumerable.Range(0, size).Select(i => Indexed(i, () => ElementAt(() => Field("_array"), offset + i))));
+            return new CollectionView(size, () => Enumerable.Range(0, size).Select(i => Indexed(i, () => ElementAt(() => Field("_array"), offset + i))),
+                (() => Field("_array"), offset));
         }
         if (typeName.StartsWith("System.Collections.Immutable.ImmutableArray<", StringComparison.Ordinal))
         {
             int size = Length("array");
-            return new CollectionView(size, () => Enumerable.Range(0, size).Select(i => Indexed(i, () => ElementAt(() => Field("array"), i))));
+            return new CollectionView(size, () => Enumerable.Range(0, size).Select(i => Indexed(i, () => ElementAt(() => Field("array"), i))),
+                (() => Field("array"), 0));
         }
         if (typeName.StartsWith("System.Collections.ObjectModel.ReadOnlyCollection<", StringComparison.Ordinal))
         {
@@ -793,21 +925,28 @@ internal sealed partial class ValueInspector
             // _entries[0.._count) where next >= -1 are live; freed entries chain through more negative values
             int used = Int("_count"), live = used - Int("_freeCount");
             string next = dictionary ? "next" : "Next";
+            CollectionItem Item(int position, int index)
+            {
+                Func<CorDebugValue?> entry = () => ElementAt(() => Field("_entries"), position);
+                return dictionary
+                    ? new CollectionItem("[" + Key(() => GetFieldByName(entry()!, "key")) + "]", () => GetFieldByName(entry()!, "value"))
+                    : Indexed(index, () => GetFieldByName(entry()!, "Value"), false);
+            }
             IEnumerable<CollectionItem> Items()
             {
                 int index = 0;
                 for (int i = 0; i < used; i++)
                 {
-                    int position = i;
-                    Func<CorDebugValue?> entry = () => ElementAt(() => Field("_entries"), position);
-                    if (entry() is not { } e || Convert.ToInt32(ReadPrimitive(GetFieldByName(e, next)!), CultureInfo.InvariantCulture) < -1)
+                    _host.ThrowIfCancelled();
+                    if (ElementAt(() => Field("_entries"), i) is not { } e || Convert.ToInt32(ReadPrimitive(GetFieldByName(e, next)!), CultureInfo.InvariantCulture) < -1)
                         continue;
-                    yield return dictionary
-                        ? new CollectionItem("[" + Key(() => GetFieldByName(entry()!, "key")) + "]", () => GetFieldByName(entry()!, "value"))
-                        : Indexed(index++, () => GetFieldByName(entry()!, "Value"), false);
+                    yield return Item(i, index++);
                 }
             }
-            return new CollectionView(live, Items);
+            // nothing was ever removed: entry i is item i, and a page deep inside costs no more than the first one
+            return used == live
+                ? new CollectionView(live, () => Enumerable.Range(0, live).Select(i => Item(i, i)))
+                : new CollectionView(live, Items);
         }
         return null;
     }
@@ -980,25 +1119,22 @@ internal sealed partial class ValueInspector
     private bool IsString(CorDebugValue target) =>
         target.Type == CorElementType.String || (target.Type == CorElementType.Class && SafeTypeName(target) == "System.String");
 
-    private string ReadStringValue(CorDebugValue target)
-    {
-        if (target.Type != CorElementType.String)
-        {
-            // Not typed as a string by ICorDebug (see IsString): read the object itself.
-            // Layout of System.String: method table pointer, int length, UTF-16 characters.
-            ulong address = target.Address.Value;
-            int stringLength = BitConverter.ToInt32(_host.ReadMemory(address + (ulong)IntPtr.Size, 4));
-            int shown = Math.Clamp(stringLength, 0, MaxStringLength);
-            string content = shown == 0 ? "" : System.Text.Encoding.Unicode.GetString(_host.ReadMemory(address + (ulong)IntPtr.Size + 4, shown * 2));
-            return stringLength > MaxStringLength ? content + "..." : content;
-        }
+    // one character more than what is shown: that is how FormatHost knows the string was longer
+    private static int StringLimit(DisplayOptions options) => options.FullStrings ? int.MaxValue : MaxStringLength + 1;
 
-        var s = target.As<CorDebugStringValue>();
-        int length = s.Length;
-        if (length == 0)
-            return ""; // ICorDebugStringValue::GetString rejects empty buffers
-        string text = s.GetString(Math.Min(length, MaxStringLength));
-        return length > MaxStringLength ? text + "..." : text;
+    /// <summary>
+    /// Reads the characters out of the debuggee's memory: ICorDebugStringValue::GetString cannot return a part of a
+    /// string, and strings reached through their address are not typed as strings by ICorDebug at all (see IsString).
+    /// </summary>
+    private string ReadStringValue(CorDebugValue target, int limit = int.MaxValue)
+    {
+        // Layout of System.String: method table pointer, int length, UTF-16 characters.
+        ulong address = target.Address.Value;
+        int length = target.Type == CorElementType.String
+            ? target.As<CorDebugStringValue>().Length
+            : BitConverter.ToInt32(_host.ReadMemory(address + (ulong)IntPtr.Size, 4));
+        int read = Math.Clamp(length, 0, limit);
+        return read == 0 ? "" : System.Text.Encoding.Unicode.GetString(_host.ReadMemory(address + (ulong)IntPtr.Size + 4, read * 2));
     }
 
     public string GetTypeName(CorDebugValue value)
@@ -1161,6 +1297,7 @@ internal sealed partial class ValueInspector
             null => ("null", null),
             bool b => (b ? "true" : "false", "bool"),
             char c => (options.NoQuotes ? c.ToString() : FormatChar(c), "char"),
+            string { Length: > MaxStringLength } s when !options.FullStrings => FormatHost(s[..MaxStringLength] + "...", options with { FullStrings = true }),
             string s => (options.NoQuotes ? s : Quote(s), "string"),
             float f => (f.ToString("R", inv), "float"),
             double d => (d.ToString("R", inv), "double"),

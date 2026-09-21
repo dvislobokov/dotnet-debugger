@@ -16,12 +16,16 @@ public sealed partial class DebugEngine
         public required LoadedModule Module { get; init; }
         public required int MethodToken { get; init; }
         public Dictionary<CodeLocation, int> YieldToResumeOffset { get; } = [];
-        public HashSet<CodeLocation> Resume { get; } = [];
 
         /// <summary>
-        /// Strong handle to the state machine object the step belongs to: the same async method may be running many
-        /// times at once, and only this invocation's continuation is the one being stepped. Null when unknown.
+        /// Where the step may go on, and in which invocation: a strong handle to the state machine object, because the
+        /// same async method may be running many times at once. Null when unknown (then any invocation will do).
+        /// These are the places where the method itself continues after an await, and the places where the method
+        /// awaiting it continues once this one is done (a step past its end, or out of it).
         /// </summary>
+        public Dictionary<CodeLocation, CorDebugHandleValue?> Resume { get; } = [];
+
+        /// <summary>The state machine of the method being stepped.</summary>
         public CorDebugHandleValue? StateMachine { get; set; }
     }
 
@@ -37,7 +41,7 @@ public sealed partial class DebugEngine
         lock (_lock)
         {
             CorDebugProcess process = RequireStopped();
-            CorDebugThread thread = process.GetThread(threadId);
+            CorDebugThread thread = RequireThread(threadId);
             ClearAsyncStep();
             _leavingFilteredMethod = false;
             _stepOriginMethod = GetMethodName(thread.ActiveFrame);
@@ -60,7 +64,8 @@ public sealed partial class DebugEngine
         }
     }
 
-    private void StartStep(CorDebugThread thread, StepKind kind)
+    /// <param name="wholeMethod">The step ends when the method is left, in whichever direction.</param>
+    private void StartStep(CorDebugThread thread, StepKind kind, bool wholeMethod = false)
     {
         CorDebugFrame? frame = thread.ActiveFrame;
         CorDebugStepper stepper = frame != null ? frame.CreateStepper() : thread.CreateStepper();
@@ -71,7 +76,9 @@ public sealed partial class DebugEngine
         if (kind != StepKind.Out && frame is CorDebugILFrame ilFrame)
         {
             CorDebugFunction function = ilFrame.Function;
-            range = GetMetadata(function.Module)?.GetStepRange((int)function.Token.Value, ilFrame.IP.pnOffset, function.ILCode.Size);
+            range = wholeMethod
+                ? (0, function.ILCode.Size)
+                : GetMetadata(function.Module)?.GetStepRange((int)function.Token.Value, ilFrame.IP.pnOffset, function.ILCode.Size);
         }
 
         if (kind == StepKind.Out)
@@ -118,6 +125,7 @@ public sealed partial class DebugEngine
         {
             CorDebugFunction function = frame.Function;
             ModuleMetadata? metadata = GetMetadata(function.Module);
+            Log?.Invoke($"Step complete ({e.Reason}) in {GetMethodName(frame)} at IL offset {frame.IP.pnOffset} ({frame.IP.pMappingResult})");
 
             try
             {
@@ -143,15 +151,28 @@ public sealed partial class DebugEngine
                 Log?.Invoke("Step filtering failed: " + ex.Message);
             }
 
-            // Landed somewhere without source lines: keep going until user-visible code is reached.
+            // Landed somewhere without source lines: keep going until there is a line to show. Hidden code inside a
+            // method that has lines is stepped through. A method without any is left again, and a "step in" goes on:
+            //  - "just my code": the method is compiler generated (the constructor of a state machine or a closure).
+            //    Stepping in through all of it lets the stepper find the user code that runs next, which for an async
+            //    method is its body: stepping out would only return once the (non-user) kick-off method is done.
+            //  - otherwise it is code without symbols: stepping through it would wander off into the framework, so
+            //    it is left at once and the step in carries on from the call site.
             bool hidden = false;
             SourceLocation? location = metadata?.GetSourceLocation((int)function.Token.Value, frame.IP.pnOffset, out hidden);
-            if (location == null && (_justMyCode || hidden))
+            if (location == null)
             {
                 try
                 {
+                    bool steppedIn = !hidden && _activeStepKind == StepKind.In && e.Reason == CorDebugStepReason.STEP_CALL;
+                    if (steppedIn && _justMyCode)
+                    {
+                        StartStep(thread, StepKind.In, wholeMethod: true);
+                        return EventAction.Continue;
+                    }
                     StepKind next = !hidden ? StepKind.Out : _activeStepKind == StepKind.Out ? StepKind.Over : _activeStepKind;
                     StartStep(thread, next);
+                    _leavingFilteredMethod = steppedIn;
                     return EventAction.Continue;
                 }
                 catch (Exception ex)
@@ -240,6 +261,9 @@ public sealed partial class DebugEngine
             foreach ((int yieldOffset, int resumeOffset) in info.Awaits)
                 step.YieldToResumeOffset[AcquireNativeBreakpoint(module, token, yieldOffset)] = resumeOffset;
             _asyncStep = step;
+            // A step past the end of the method: whoever awaits it continues from inside the framework code that
+            // completes the task, where no stepper would look for it.
+            WatchAwaitingMethod(step, frame.GetArgument(0));
         }
         catch (Exception e)
         {
@@ -261,21 +285,11 @@ public sealed partial class DebugEngine
             if (GetMetadata(function.Module)?.GetAsyncSteppingInfo((int)function.Token.Value) == null)
                 return false;
 
-            CorDebugValue? callerStateMachine = GetAwaitingStateMachine(frame.GetArgument(0));
-            CorDebugValue? unwrapped = callerStateMachine == null ? null : ValueInspector.Unwrap(callerStateMachine, out _);
-            if (unwrapped == null)
+            if (!_modules.TryGetValue(function.Module.BaseAddress.Value, out LoadedModule? module))
                 return false;
-
-            CorDebugClass callerClass = unwrapped.ExactType.Class;
-            if (!_modules.TryGetValue(callerClass.Module.BaseAddress.Value, out LoadedModule? callerModule) || callerModule.Metadata == null)
+            var step = new AsyncStep { ThreadId = thread.Id, Module = module, MethodToken = (int)function.Token.Value };
+            if (!WatchAwaitingMethod(step, frame.GetArgument(0)))
                 return false;
-            MethodDescription? moveNext = callerModule.Metadata.GetMethods((int)callerClass.Token.Value, "MoveNext").FirstOrDefault();
-            if (moveNext == null || callerModule.Metadata.GetAsyncSteppingInfo(moveNext.Token) is not { } info)
-                return false;
-
-            var step = new AsyncStep { ThreadId = thread.Id, Module = callerModule, MethodToken = moveNext.Token, StateMachine = TryCreateHandle(callerStateMachine) };
-            foreach ((_, int resumeOffset) in info.Awaits)
-                step.Resume.Add(AcquireNativeBreakpoint(callerModule, moveNext.Token, resumeOffset));
             _asyncStep = step;
             _activeStepKind = StepKind.Out;
             return true;
@@ -285,6 +299,31 @@ public sealed partial class DebugEngine
             Log?.Invoke("Async step out is not available: " + e.Message);
             return false;
         }
+    }
+
+    /// <summary>Breakpoints where the async method continues that awaits the method of <paramref name="stateMachine"/>.</summary>
+    /// <returns>false if there is no such method (a blocking Wait(), a caller without symbols).</returns>
+    private bool WatchAwaitingMethod(AsyncStep step, CorDebugValue? stateMachine)
+    {
+        CorDebugValue? callerStateMachine = GetAwaitingStateMachine(stateMachine);
+        CorDebugValue? unwrapped = callerStateMachine == null ? null : ValueInspector.Unwrap(callerStateMachine, out _);
+        if (unwrapped == null)
+            return false;
+
+        CorDebugClass callerClass = unwrapped.ExactType.Class;
+        if (!_modules.TryGetValue(callerClass.Module.BaseAddress.Value, out LoadedModule? callerModule) || callerModule.Metadata == null)
+            return false;
+        MethodDescription? moveNext = callerModule.Metadata.GetMethods((int)callerClass.Token.Value, "MoveNext").FirstOrDefault();
+        if (moveNext == null || callerModule.Metadata.GetAsyncSteppingInfo(moveNext.Token) is not { } info)
+            return false;
+
+        foreach ((_, int resumeOffset) in info.Awaits)
+        {
+            CodeLocation location = AcquireNativeBreakpoint(callerModule, moveNext.Token, resumeOffset);
+            if (!step.Resume.TryAdd(location, TryCreateHandle(callerStateMachine)))
+                ReleaseNativeBreakpoint(location);
+        }
+        return true;
     }
 
     /// <summary>
@@ -322,14 +361,17 @@ public sealed partial class DebugEngine
             return;
         foreach (CodeLocation location in _asyncStep.YieldToResumeOffset.Keys)
             ReleaseNativeBreakpoint(location);
-        foreach (CodeLocation resume in _asyncStep.Resume)
+        foreach (CodeLocation resume in _asyncStep.Resume.Keys)
             ReleaseNativeBreakpoint(resume);
-        try
+        foreach (CorDebugHandleValue? handle in _asyncStep.Resume.Values.Append(_asyncStep.StateMachine))
         {
-            _asyncStep.StateMachine?.Dispose();
-        }
-        catch (Exception)
-        {
+            try
+            {
+                handle?.Dispose();
+            }
+            catch (Exception)
+            {
+            }
         }
         _asyncStep = null;
     }
@@ -340,13 +382,15 @@ public sealed partial class DebugEngine
         if (_asyncStep is not { } step)
             return null;
 
-        if (step.Resume.Contains(location))
+        if (step.Resume.TryGetValue(location, out CorDebugHandleValue? expected))
         {
             // another invocation of the same async method resuming: not the one being stepped
-            if (step.StateMachine != null && !IsSameObject(step.StateMachine, TryGet(() => (thread.ActiveFrame as CorDebugILFrame)?.GetArgument(0))))
+            if (expected != null && !IsSameObject(expected, TryGet(() => (thread.ActiveFrame as CorDebugILFrame)?.GetArgument(0))))
                 return AllBreakpoints.Any(b => b.Bound.Contains(location)) ? null : EventAction.Continue;
 
-            // The method continues (possibly on another thread): finish the step from here to the next line.
+            // The method continues (possibly on another thread): finish the step from here to the next line. The
+            // stepper of the method that has just ended may still be waiting for a return that is of no interest now.
+            DeactivateStepper();
             ClearAsyncStep();
             StartStep(thread, StepKind.Over);
             return EventAction.Continue;
@@ -359,7 +403,11 @@ public sealed partial class DebugEngine
             foreach (CodeLocation yield in step.YieldToResumeOffset.Keys)
                 ReleaseNativeBreakpoint(yield);
             step.YieldToResumeOffset.Clear();
-            step.Resume.Add(AcquireNativeBreakpoint(step.Module, step.MethodToken, resumeOffset));
+            CodeLocation resume = AcquireNativeBreakpoint(step.Module, step.MethodToken, resumeOffset);
+            if (step.Resume.TryAdd(resume, step.StateMachine))
+                step.StateMachine = null; // the entry owns the handle now
+            else
+                ReleaseNativeBreakpoint(resume);
             return AllBreakpoints.Any(b => b.Bound.Contains(location)) ? null : EventAction.Continue;
         }
         return null;

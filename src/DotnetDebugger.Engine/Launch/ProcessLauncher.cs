@@ -223,13 +223,23 @@ internal static class ProcessLauncher
     //
     // exec keeps the pid, so the runtime startup hook can be registered for it while the shell is still waiting. When
     // the debuggee is gone the outer shell reports "exit N". Both directions are FIFOs: a shell has nothing better.
+    //
+    // A third FIFO is the watchdog: the debugger holds it open and never writes to it, except "detach" when it lets
+    // the debuggee go. Reading from it returns when the debugger has said so or is no more (killed, out of memory,
+    // crashed with its IDE), and a debuggee nobody debugs any longer is killed. PR_SET_PDEATHSIG would do the same on
+    // Linux only, and only for a direct child.
     private const string LaunchScript =
-        "ctl=\"$1\"; go=\"$2\"; shift 2\n" +
+        "ctl=\"$1\"; go=\"$2\"; alive=\"$3\"; shift 3\n" +
         // In the background and waited for: a shell reports the death of a foreground command ("Killed") on stderr, which
         // is the debuggee's stderr. A background command would get /dev/null as its stdin, hence "<&0".
         "/bin/sh -c 'echo \"pid $$\" > \"$0\"; read line < \"$1\"; shift; exec \"$@\"' \"$ctl\" \"$go\" \"$@\" <&0 &\n" +
-        "wait $! 2>/dev/null\n" + // dash prints the remark from "wait" as well
+        "child=$!\n" +
+        // the control FIFO goes first: without the debugger nobody reads it, and the report below would block forever
+        "( exec >/dev/null 2>&1; verdict=; read verdict < \"$alive\"; [ \"$verdict\" = detach ] || { rm -f \"$ctl\"; kill -9 $child; } ) &\n" +
+        "watchdog=$!\n" +
+        "wait $child 2>/dev/null\n" + // dash prints the remark from "wait" as well
         "code=$?\n" +
+        "kill $watchdog 2>/dev/null\n" +
         // the FIFO disappears when the debugger has detached or is gone: nobody would ever read it
         "if [ -p \"$ctl\" ]; then echo \"exit $code\" > \"$ctl\"; fi\n";
 
@@ -240,19 +250,21 @@ internal static class ProcessLauncher
     {
         string directory = Directory.CreateTempSubdirectory("dotnet-debugger-").FullName;
         string script = Path.Combine(directory, "launch.sh"), control = Path.Combine(directory, "ctl"), go = Path.Combine(directory, "go");
-        FileStream? controlStream = null, goStream = null;
+        string alive = Path.Combine(directory, "alive");
+        FileStream? controlStream = null, goStream = null, aliveStream = null;
         byte[] envBlock = Encoding.UTF8.GetBytes(string.Concat(BuildEnvironment(env).Select(e => e + "\0")) + "\0");
         GCHandle envHandle = GCHandle.Alloc(envBlock, GCHandleType.Pinned);
         try
         {
             File.WriteAllText(script, LaunchScript);
-            if (mkfifo(control, 0x180 /* 0600 */) != 0 || mkfifo(go, 0x180) != 0)
+            if (mkfifo(control, 0x180 /* 0600 */) != 0 || mkfifo(go, 0x180) != 0 || mkfifo(alive, 0x180) != 0)
                 throw new DebuggerException($"Cannot create a FIFO in '{directory}' (errno {Marshal.GetLastPInvokeError()}).");
             // read+write: opening never blocks, and the reader sees no end of file between the two writers
             controlStream = new FileStream(control, FileMode.Open, FileAccess.ReadWrite, FileShare.ReadWrite, 1);
             goStream = new FileStream(go, FileMode.Open, FileAccess.ReadWrite, FileShare.ReadWrite, 1);
+            aliveStream = new FileStream(alive, FileMode.Open, FileAccess.ReadWrite, FileShare.ReadWrite, 1);
 
-            string commandLine = string.Join(' ', new[] { "/bin/sh", script, control, go }.Concat(argv).Select(QuoteArgument));
+            string commandLine = string.Join(' ', new[] { "/bin/sh", script, control, go, alive }.Concat(argv).Select(QuoteArgument));
             CreateProcessForLaunchResult result;
             lock (s_stdioSwapLock)
             {
@@ -280,7 +292,7 @@ internal static class ProcessLauncher
             if (!first.Wait(TimeSpan.FromSeconds(15)) || first.Result?.Split(' ') is not ["pid", var pidText] || !int.TryParse(pidText, out int pid))
                 throw new DebuggerException("The launcher shell did not report the process id" + (first.IsCompleted ? $": '{first.Result}'." : "."));
 
-            FileStream controlOwned = controlStream, goOwned = goStream;
+            FileStream controlOwned = controlStream, goOwned = goStream, aliveOwned = aliveStream;
             int shell = result.ProcessId;
             Task<int?> exitCode = Task.Run(() =>
             {
@@ -297,20 +309,34 @@ internal static class ProcessLauncher
                     waitpid(shell, out _, 0); // no zombie; whoever else reaps it is welcome
                     controlOwned.Dispose();
                     goOwned.Dispose();
+                    aliveOwned.Dispose();
                     TryDelete(directory);
                 }
             });
-            controlStream = goStream = null;
+            controlStream = goStream = aliveStream = null;
             return (pid, () =>
             {
                 goOwned.Write("go\n"u8);
                 goOwned.Flush();
-            }, exitCode, () => TryDelete(directory));
+            }, exitCode, () =>
+            {
+                try
+                {
+                    aliveOwned.Write("detach\n"u8);
+                    aliveOwned.Flush();
+                }
+                catch (Exception e) when (e is IOException or ObjectDisposedException)
+                {
+                    // the debuggee is gone already
+                }
+                TryDelete(directory);
+            });
         }
         catch
         {
             controlStream?.Dispose();
             goStream?.Dispose();
+            aliveStream?.Dispose();
             TryDelete(directory);
             throw;
         }

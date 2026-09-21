@@ -1,5 +1,7 @@
+using System.Globalization;
 using System.Text;
 using System.Text.Json;
+using System.Text.RegularExpressions;
 
 namespace DotnetDebugger.Protocol;
 
@@ -23,38 +25,86 @@ public sealed class DapConnection : IDisposable
         _output = output;
     }
 
-    /// <summary>Reads the next message, or returns null when the peer closed the stream.</summary>
+    /// <summary>Frames larger than this are not believed: the header is ignored as malformed.</summary>
+    private const int MaxContentLength = 64 * 1024 * 1024;
+
+    /// <summary>
+    /// Reads the next message, or returns null when the peer closed the stream. Frames that make no sense (a header
+    /// that is not a number, a body that is not a DAP message) are skipped: losing the session over them would take
+    /// the debuggee down too. Where the sequence number of such a frame can be told, it is answered with an error.
+    /// </summary>
     public DapMessage? Read()
     {
-        int contentLength = -1;
+        try
+        {
+            return ReadNext();
+        }
+        catch (IOException)
+        {
+            return null; // a connection that was reset rather than closed: the peer is gone all the same
+        }
+    }
+
+    private DapMessage? ReadNext()
+    {
         while (true)
         {
-            string? line = ReadHeaderLine();
-            if (line == null)
-                return null;
-            if (line.Length == 0)
+            int contentLength = -1;
+            while (true)
             {
-                if (contentLength >= 0)
-                    break;
-                continue;
+                string? line = ReadHeaderLine();
+                if (line == null)
+                    return null;
+                if (line.Length == 0)
+                {
+                    if (contentLength >= 0)
+                        break;
+                    continue;
+                }
+                int colon = line.IndexOf(':');
+                if (colon > 0 && line.AsSpan(0, colon).Trim().Equals("Content-Length", StringComparison.OrdinalIgnoreCase))
+                {
+                    if (int.TryParse(line.AsSpan(colon + 1).Trim(), NumberStyles.None, CultureInfo.InvariantCulture, out int length) && length <= MaxContentLength)
+                        contentLength = length;
+                    else
+                        Trace?.Invoke("<- (ignored) " + line);
+                }
             }
-            int colon = line.IndexOf(':');
-            if (colon > 0 && line.AsSpan(0, colon).Trim().Equals("Content-Length", StringComparison.OrdinalIgnoreCase))
-                contentLength = int.Parse(line.AsSpan(colon + 1).Trim());
-        }
 
-        var buffer = new byte[contentLength];
-        int read = 0;
-        while (read < contentLength)
-        {
-            int n = _input.Read(buffer, read, contentLength - read);
-            if (n == 0)
-                return null;
-            read += n;
-        }
+            var buffer = new byte[contentLength];
+            int read = 0;
+            while (read < contentLength)
+            {
+                int n = _input.Read(buffer, read, contentLength - read);
+                if (n == 0)
+                    return null;
+                read += n;
+            }
 
-        Trace?.Invoke("<- " + Encoding.UTF8.GetString(buffer));
-        return JsonSerializer.Deserialize<DapMessage>(buffer, DapJson.Options);
+            Trace?.Invoke("<- " + Encoding.UTF8.GetString(buffer));
+            try
+            {
+                if (JsonSerializer.Deserialize<DapMessage>(buffer, DapJson.Options) is { } message)
+                    return message;
+            }
+            catch (JsonException e)
+            {
+                RejectMalformed(buffer, e.Message);
+            }
+        }
+    }
+
+    private void RejectMalformed(byte[] body, string reason)
+    {
+        // whatever can be told about the frame: it may be JSON of the wrong shape, or no JSON at all
+        string text = Encoding.UTF8.GetString(body);
+        Match seq = Regex.Match(text, @"""seq""\s*:\s*""?(\d{1,9})");
+        if (!seq.Success || Regex.IsMatch(text, @"""type""\s*:\s*""(response|event)"""))
+            return;
+        Match command = Regex.Match(text, @"""command""\s*:\s*""([A-Za-z]+)""");
+        SendErrorResponse(
+            new DapMessage { Seq = int.Parse(seq.Groups[1].Value, CultureInfo.InvariantCulture), Command = command.Success ? command.Groups[1].Value : "" },
+            "Malformed message: " + reason);
     }
 
     private string? ReadHeaderLine()

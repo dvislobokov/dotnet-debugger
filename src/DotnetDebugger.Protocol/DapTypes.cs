@@ -84,6 +84,9 @@ public sealed class LaunchArguments
     /// <summary>Step over properties and operators when stepping in. Default true.</summary>
     public bool? EnableStepFiltering { get; set; }
 
+    /// <summary>Describe values by running the debuggee's code (ToString(), property getters, [DebuggerDisplay]). Default true.</summary>
+    public bool? AllowImplicitFuncEval { get; set; }
+
     /// <summary>Path prefix recorded in the PDB -> directory on this machine.</summary>
     public Dictionary<string, string>? SourceFileMap { get; set; }
 
@@ -155,6 +158,7 @@ public sealed class AttachArguments
 {
     public JsonElement ProcessId { get; set; }
     public bool? JustMyCode { get; set; }
+    public bool? AllowImplicitFuncEval { get; set; }
     public Dictionary<string, string>? SourceFileMap { get; set; }
 
     public int GetProcessId() => ProcessId.ValueKind switch

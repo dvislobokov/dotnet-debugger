@@ -78,6 +78,7 @@ dotnet-debugger --version
 | `stopAtEntry` | Остановиться на первой строке `Main` |
 | `justMyCode` | По умолчанию `true`: код без символов пропускается при шагах и сворачивается в `[External Code]` |
 | `enableStepFiltering` | По умолчанию `true`: Step Into не заходит в свойства и операторы |
+| `allowImplicitFuncEval` | По умолчанию `true`. `false` — при показе переменных код программы не запускается (`ToString()`, `[DebuggerDisplay]`, геттеры); свойства вычисляются по клику |
 | `symbolOptions` | `{ "searchPaths": ["C:/symbols", "https://symbols.example.com"], "cachePath": "...", "searchMicrosoftSymbolServer": true, "searchNuGetOrgSymbolServer": true }` |
 | `sourceFileMap` | `{ "/_/": "${workspaceFolder}" }` — пути из символов → локальные каталоги (сборки из CI, контейнеров) |
 | `suppressJitOptimizations` | Запуск без предкомпилированного (ReadyToRun) кода; включается сам для R2R-программ |

@@ -17,14 +17,13 @@ public sealed partial class DebugEngine
     private readonly HashSet<int> _passedUserCode = [];
     private bool _breakOnThrown;
     private bool _breakOnUserUnhandled;
-    private bool _breakOnUnhandled = true;
+    private bool _diedOfUnhandledException;
 
     public void SetExceptionFilters(IReadOnlyCollection<string> filters)
     {
         lock (_lock)
         {
             _breakOnThrown = filters.Contains(FilterAll);
-            _breakOnUnhandled = filters.Contains(FilterUnhandled);
             _breakOnUserUnhandled = filters.Contains(FilterUserUnhandled);
         }
     }
@@ -69,7 +68,11 @@ public sealed partial class DebugEngine
             case CorDebugExceptionCallbackType.DEBUG_EXCEPTION_UNHANDLED:
                 _firstChanceReported.Remove(threadId);
                 _passedUserCode.Remove(threadId);
-                return _breakOnUnhandled && MatchesExceptionCondition(FilterUnhandled, thread)
+                _diedOfUnhandledException = true;
+                // Whatever the filters say: the process is about to die, and showing why is what a debugger is for.
+                // The "unhandled" filter only carries the type condition (a client that does not know the filter
+                // sends none, and gets every stop).
+                return MatchesExceptionCondition(FilterUnhandled, thread)
                     ? StopAtException(thread, "unhandled")
                     : EventAction.Continue;
 
@@ -159,7 +162,7 @@ public sealed partial class DebugEngine
         {
             RequireStopped();
             string breakMode = _exceptionStops.GetValueOrDefault(threadId, "always");
-            return ReadException(() => RequireProcess().GetThread(threadId).CurrentException, breakMode, 0, threadId);
+            return ReadException(() => RequireThread(threadId).CurrentException, breakMode, 0, threadId);
         }
     }
 }

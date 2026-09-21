@@ -26,6 +26,10 @@ if (args.Length >= 5 && args[0] == TerminalLauncher.HelperOption && args[3] == "
     }
 }
 
+// Helper mode, started by the debugger itself:  --console-utf8 PID   (see ConsoleCodePage)
+if (args.Length == 2 && args[0] == DotnetDebugger.Engine.Launch.ConsoleCodePage.HelperOption && int.TryParse(args[1], out int consoleOwner))
+    return DotnetDebugger.Engine.Launch.ConsoleCodePage.RunHelper(consoleOwner);
+
 int? port = null;
 string? logPath = null;
 foreach (string arg in args)

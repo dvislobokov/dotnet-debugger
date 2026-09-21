@@ -10,6 +10,8 @@ public sealed partial class DebugEngine
 
     private sealed class VariableContainer(Func<int, int, List<VariableInfo>> provider, InspectionContext? context)
     {
+        /// <summary>The value of a lazy variable: asking for it is the user's decision to run its getter.</summary>
+        public bool IsLazy { get; init; }
         public Func<int, int, List<VariableInfo>> Provider { get; } = provider;
         public InspectionContext? Context { get; } = context;
         public List<VariableInfo>? LastChildren { get; set; }
@@ -19,6 +21,7 @@ public sealed partial class DebugEngine
     // position rather than by ICorDebug object because a func-eval invalidates those objects.
     private readonly Dictionary<int, FrameRef?> _frames = [];
     private readonly Dictionary<int, List<FrameInfo>> _threadFrames = [];
+    private readonly Dictionary<int, FrameRef> _externalFrames = [];
     private readonly Dictionary<int, VariableContainer> _variableHandles = [];
     private int _nextHandle;
 
@@ -67,7 +70,7 @@ public sealed partial class DebugEngine
 
     private IEnumerable<CorDebugILFrame> EnumerateILFrames(int threadId)
     {
-        CorDebugThread thread = RequireProcess().GetThread(threadId);
+        CorDebugThread thread = RequireThread(threadId);
         foreach (CorDebugChain chain in thread.Chains)
         {
             if (!chain.IsManaged)
@@ -170,6 +173,7 @@ public sealed partial class DebugEngine
                 return;
             int externalId = ++_nextHandle;
             _frames[externalId] = null;
+            _externalFrames[externalId] = frameRef;
             result.Add(new FrameInfo(externalId, ExternalCode, null, 0, 0, 0, 0));
             return;
         }
@@ -228,7 +232,10 @@ public sealed partial class DebugEngine
             throw new DebuggerException($"Unknown frame {frameId}.");
         if (_logicalFrames.ContainsKey(frameId))
             throw new DebuggerException("Expressions cannot be evaluated in frames of the async call stack: the method is suspended.");
-        return frame ?? throw new DebuggerException("No information is available for external code.");
+        // Behind an [External Code] placeholder there is a real frame. It has no names to offer, but what belongs to
+        // the thread ($exception) or to nobody (statics, literals) can be evaluated there as anywhere else.
+        return frame ?? _externalFrames.GetValueOrDefault(frameId)
+            ?? throw new DebuggerException("No information is available for external code.");
     }
 
     // ---------------------------------------------------------------- variables
@@ -262,15 +269,15 @@ public sealed partial class DebugEngine
     // Only the locals scope consults this: everything below it inherits the options it was described with.
     private DisplayOptions? _requestOptions;
 
-    private int RegisterContainer(Func<int, int, List<VariableInfo>> provider, InspectionContext? context)
+    private int RegisterContainer(Func<int, int, List<VariableInfo>> provider, InspectionContext? context, bool isLazy = false)
     {
         int handle = ++_nextHandle;
-        _variableHandles[handle] = new VariableContainer(provider, context);
+        _variableHandles[handle] = new VariableContainer(provider, context) { IsLazy = isLazy };
         return handle;
     }
 
     private (VariableInfo Variable, int Handle) WithHandle(VariableInfo variable) =>
-        (variable, variable.ChildrenProvider is { } provider ? RegisterContainer(provider, variable.Context) : 0);
+        (variable, variable.ChildrenProvider is { } provider ? RegisterContainer(provider, variable.Context, variable.IsLazy) : 0);
 
     /// <param name="hex">Show integers in hexadecimal (the client's "value format").</param>
     public IReadOnlyList<(VariableInfo Variable, int Handle)> GetVariables(int handle, int start = 0, int count = 0, bool hex = false)
@@ -283,9 +290,17 @@ public sealed partial class DebugEngine
 
             StartImplicitEvalBudget();
             _requestOptions = hex ? new DisplayOptions(Hex: true) : null;
-            List<VariableInfo> children = container.Provider(start, count);
-            container.LastChildren = children;
-            return children.Select(WithHandle).ToList();
+            _explicitExpansion = container.IsLazy;
+            try
+            {
+                List<VariableInfo> children = container.Provider(start, count);
+                container.LastChildren = children;
+                return children.Select(WithHandle).ToList();
+            }
+            finally
+            {
+                _explicitExpansion = false;
+            }
         }
     }
 
@@ -309,7 +324,7 @@ public sealed partial class DebugEngine
             });
         }
 
-        Func<CorDebugValue?> exception = () => RequireProcess().GetThread(frame.ThreadId).CurrentException;
+        Func<CorDebugValue?> exception = () => RequireThread(frame.ThreadId).CurrentException;
         if (TryGet(exception) is { } current && ValueInspector.Unwrap(current, out bool isNull) != null && !isNull)
         {
             VariableInfo value = _values.Describe("$exception", Stabilize(exception), "$exception", context, options);
@@ -470,7 +485,8 @@ public sealed partial class DebugEngine
     // ---------------------------------------------------------------- evaluate / set
 
     /// <param name="allowCalls">false for side-effect free contexts such as mouse hovers.</param>
-    public (VariableInfo Variable, int Handle) Evaluate(string expression, int? frameId, bool allowCalls = true, bool hex = false)
+    /// <param name="fullStrings">Strings are returned whole, however long (the "clipboard" context).</param>
+    public (VariableInfo Variable, int Handle) Evaluate(string expression, int? frameId, bool allowCalls = true, bool hex = false, bool fullStrings = false)
     {
         lock (_lock)
         {
@@ -480,7 +496,7 @@ public sealed partial class DebugEngine
                 throw new DebuggerException("Expressions can only be evaluated in the context of a stack frame.");
             FrameRef frame = ResolveFrame(frameId.Value);
             var evaluator = new Evaluator(this, frame, allowCalls);
-            return WithHandle(evaluator.EvaluateToVariable(expression, hex ? new DisplayOptions(Hex: true) : null));
+            return WithHandle(evaluator.EvaluateToVariable(expression, new DisplayOptions(Hex: hex, FullStrings: fullStrings)));
         }
     }
 

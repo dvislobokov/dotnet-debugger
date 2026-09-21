@@ -261,7 +261,8 @@ public class Wave1Tests
         watch.Stop();
 
         Assert.Equal("1", children["Fast"].Value);
-        Assert.Equal("2", children["SlowOne"].Value); // started within the budget, so it is allowed to finish
+        // 1.5 s: more than a getter gets when nobody asked for it (1 s). From there on the view stops running code by itself.
+        Assert.Contains("timed out", children["SlowOne"].Value);
         Assert.True(children["SlowTwo"].PresentationHint?.Lazy, "SlowTwo should be deferred");
         Assert.True(children["After"].PresentationHint?.Lazy, "everything after the budget is deferred");
         Assert.True(watch.Elapsed < TimeSpan.FromSeconds(4), $"listing took {watch.Elapsed}");

@@ -90,7 +90,7 @@ internal sealed partial class ValueInspector
         TypeLevel level = GetTypeLevels(span).First();
         MethodDescription toArray = level.Metadata.GetMethods(level.Token, "ToArray").First(m => !m.IsStatic && m.ParameterTypes.Length == 0);
         CorDebugFunction function = level.Type.Class.Module.GetFunctionFromToken(new mdMethodDef(toArray.Token));
-        CorDebugValue? result = _host.CallFunction(context.ThreadId, function, TypeArgumentsOf(level.Type), [span]);
+        CorDebugValue? result = _host.CallFunction(context.ThreadId, function, TypeArgumentsOf(level.Type), [span], isImplicit: true);
         return _host.Stabilize(() => result);
     }
 

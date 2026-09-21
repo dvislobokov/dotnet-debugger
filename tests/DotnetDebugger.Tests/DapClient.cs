@@ -119,6 +119,14 @@ internal sealed class DapClient : IDisposable
         }
     }
 
+    /// <summary>Writes bytes to the adapter as they are: for frames no well-behaved client would send.</summary>
+    public void SendRaw(string text)
+    {
+        Stream stdin = _adapter.StandardInput.BaseStream;
+        stdin.Write(Encoding.UTF8.GetBytes(text));
+        stdin.Flush();
+    }
+
     /// <summary>Sends a request without waiting; pair with <see cref="WaitForResponse"/>.</summary>
     public int Send(string command, object? arguments = null) => _connection.SendRequest(command, arguments);
 
@@ -346,6 +354,9 @@ internal sealed class DapClient : IDisposable
 
     public bool AdapterExited(TimeSpan timeout) => _adapter.WaitForExit(timeout);
 
+    /// <summary>The adapter dies without a chance to clean up (SIGKILL, OOM killer, a crashed IDE).</summary>
+    public void KillAdapter() => _adapter.Kill();
+
     public void Dispose()
     {
         try
@@ -473,7 +484,7 @@ internal static class TestPaths
     {
         // the main debuggee first, then the small helper applications
         IEnumerable<string> files = Directory.GetFiles(TestAppDirectory, "*.cs")
-            .Concat(new[] { "SymbolLib", "SymbolApp", "EmbeddedApp" }.SelectMany(d => Directory.GetFiles(Path.Combine(s_root, "tests", d), "*.cs")));
+            .Concat(new[] { "SymbolLib", "SymbolApp", "EmbeddedApp", "AsyncMainApp" }.SelectMany(d => Directory.GetFiles(Path.Combine(s_root, "tests", d), "*.cs")));
         foreach (string path in files)
         {
             string[] lines = File.ReadAllLines(path);

@@ -71,6 +71,9 @@ public static class Program
             case "stress":
                 Wave2.Stress();
                 break;
+            default:
+                Findings.Run(mode, args);
+                break;
         }
         Console.Error.WriteLine("done");
         return 3;

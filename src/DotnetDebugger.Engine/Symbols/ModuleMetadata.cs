@@ -441,14 +441,18 @@ internal sealed partial class ModuleMetadata : IDisposable
         if (!entryName.StartsWith('<'))
             return (entryToken, 0);
 
-        // <Main> stub -> Main -> <Main>d__N.MoveNext
+        // <Main> stub -> Main -> <Main>d__N.MoveNext; with top level statements: <Main> stub -> <Main>$ -> <<Main>$>d__N.MoveNext
         string userName = entryName.Trim('<', '>');
         TypeDefinition declaringType = _md.GetTypeDefinition(entry.GetDeclaringType());
         foreach (TypeDefinitionHandle nestedHandle in declaringType.GetNestedTypes())
         {
             TypeDefinition nested = _md.GetTypeDefinition(nestedHandle);
-            if (!_md.GetString(nested.Name).StartsWith("<" + userName + ">d__", StringComparison.Ordinal))
+            string nestedName = _md.GetString(nested.Name);
+            if (!nestedName.StartsWith("<" + userName + ">d__", StringComparison.Ordinal)
+                && !nestedName.StartsWith("<" + entryName + "$>d__", StringComparison.Ordinal))
+            {
                 continue;
+            }
             foreach (MethodDefinitionHandle mh in nested.GetMethods())
             {
                 if (_md.GetString(_md.GetMethodDefinition(mh).Name) != "MoveNext")

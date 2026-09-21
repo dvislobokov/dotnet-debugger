@@ -38,6 +38,7 @@ first profile with `"commandName": "Project"` (or the profile you pick) are appl
   "stopAtEntry": false,
   "justMyCode": true,
   "enableStepFiltering": true,         // step in skips properties and operators
+  "allowImplicitFuncEval": true,       // false: never run ToString()/getters just to show a value
   "sourceFileMap": { "/_/": "${workspaceFolder}" }   // paths in the symbols -> local directories
 }
 ```

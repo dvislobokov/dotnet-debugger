@@ -37,7 +37,7 @@ Launch arguments (all optional except one of `program` / `project`):
 | `build` | Run `dotnet build` first |
 | `args`, `cwd`, `env` | Arguments, working directory, environment (`null` removes a variable) |
 | `console` | `internalConsole` (default), `integratedTerminal`, `externalTerminal` |
-| `stopAtEntry`, `justMyCode`, `enableStepFiltering` | As in other .NET debuggers |
+| `stopAtEntry`, `justMyCode`, `enableStepFiltering`, `allowImplicitFuncEval` | As in other .NET debuggers |
 | `symbolOptions`, `sourceFileMap` | Symbol servers and path mapping for code built elsewhere |
 
 `attach` takes `processId`.

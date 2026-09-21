@@ -170,7 +170,7 @@ public sealed partial class DebugEngine
             }
             catch (Exception e) when (e is ArithmeticException or InvalidCastException or FormatException or COMException)
             {
-                throw new DebuggerException(e.GetType().Name + ": " + e.Message);
+                throw new DebuggerException(e is COMException ? ErrorText.Describe(e) : e.GetType().Name + ": " + e.Message);
             }
         }
 
@@ -258,8 +258,9 @@ public sealed partial class DebugEngine
                 throw new DebuggerException("Keyword 'this' is not available in the current context.");
             if (name == ExceptionVariable)
             {
-                Func<CorDebugValue?> exception = () => engine.RequireProcess().GetThread(frame.ThreadId).CurrentException;
-                if (exception() == null)
+                Func<CorDebugValue?> exception = () => engine.RequireThread(frame.ThreadId).CurrentException;
+                // no exception: null on some platforms, S_FALSE turned into an exception on others
+                if (TryGet(exception) is not { } current || ValueInspector.Unwrap(current, out bool noException) == null || noException)
                     throw new DebuggerException("No exception is being processed on this thread.");
                 return new RemoteOperand(engine.Stabilize(exception));
             }
@@ -957,7 +958,7 @@ public sealed partial class DebugEngine
 
         private CorDebugValue CreatePrimitive(object? value)
         {
-            CorDebugEval eval = engine.RequireProcess().GetThread(frame.ThreadId).CreateEval();
+            CorDebugEval eval = engine.RequireThread(frame.ThreadId).CreateEval();
             if (value == null)
                 return eval.CreateValue(CorElementType.Class, null!);
 

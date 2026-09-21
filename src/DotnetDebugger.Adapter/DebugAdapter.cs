@@ -93,7 +93,7 @@ internal sealed class DebugAdapter : IDisposable
 
                 case "disconnect":
                     // whatever is running must not delay the end of the session
-                    _engine.CancelEvaluation();
+                    _engine.CancelCurrentRequest(sessionEnds: true);
                     Handle(message);
                     _queue.CompleteAdding();
                     return;
@@ -121,6 +121,7 @@ internal sealed class DebugAdapter : IDisposable
             {
                 cancelled = _cancelled.Remove(message.Seq);
                 _runningRequest = cancelled ? 0 : message.Seq;
+                _engine.ResetCancellation();
             }
 
             if (cancelled)
@@ -144,9 +145,9 @@ internal sealed class DebugAdapter : IDisposable
                 running = _runningRequest == requestId;
                 if (!running)
                     _cancelled.Add(requestId.Value);
+                else
+                    _engine.CancelCurrentRequest(); // under the lock: the request it is meant for is still the running one
             }
-            if (running)
-                _engine.CancelEvaluation();
         }
         _connection.SendResponse(message);
     }
@@ -159,6 +160,10 @@ internal sealed class DebugAdapter : IDisposable
             _connection.SendResponse(message, body);
             Interlocked.Exchange(ref _afterResponse, null)?.Invoke();
         }
+        catch (OperationCanceledException)
+        {
+            _connection.SendErrorResponse(message, "cancelled");
+        }
         catch (Exception e)
         {
             if (e is not DebuggerException)
@@ -166,7 +171,7 @@ internal sealed class DebugAdapter : IDisposable
             // requests racing with the end of the process (or a restart) are normal; raw HRESULTs help nobody
             bool processGone = e.Message.Contains("CORDBG_E_PROCESS_TERMINATED", StringComparison.Ordinal)
                 || e.Message.Contains("CORDBG_E_PROCESS_DETACHED", StringComparison.Ordinal);
-            _connection.SendErrorResponse(message, processGone ? "The debuggee is not running." : e.Message);
+            _connection.SendErrorResponse(message, processGone ? "The debuggee is not running." : ErrorText.Describe(e));
         }
     }
 
@@ -248,8 +253,9 @@ internal sealed class DebugAdapter : IDisposable
             case "attach":
             {
                 var args = request.GetArguments<AttachArguments>() ?? throw new DebuggerException("Missing attach arguments.");
-                _isAttach = true;
+                _engine.AllowImplicitFuncEval = args.AllowImplicitFuncEval ?? true;
                 _engine.Attach(args.GetProcessId(), args.JustMyCode ?? true, args.SourceFileMap);
+                _isAttach = true;
                 SendProcessEvent(args.GetProcessId().ToString(), "attach");
                 return null;
             }
@@ -412,7 +418,8 @@ internal sealed class DebugAdapter : IDisposable
             case "evaluate":
             {
                 var args = request.GetArguments<EvaluateArguments>()!;
-                (VariableInfo variable, int handle) = _engine.Evaluate(args.Expression, args.FrameId, allowCalls: args.Context != "hover", hex: args.Format?.Hex == true);
+                (VariableInfo variable, int handle) = _engine.Evaluate(args.Expression, args.FrameId, allowCalls: args.Context != "hover", hex: args.Format?.Hex == true,
+                    fullStrings: args.Context == "clipboard");
                 return new EvaluateResponseBody
                 {
                     Result = variable.Value,
@@ -533,6 +540,7 @@ internal sealed class DebugAdapter : IDisposable
         if (!_clientSupportsRunInTerminal)
             terminalKind = null;
 
+        _engine.AllowImplicitFuncEval = args.AllowImplicitFuncEval ?? true;
         _engine.Launch(new LaunchOptions
         {
             Program = launch.Program,

@@ -3,6 +3,30 @@
 All notable changes to this project are documented here. Versions follow [SemVer](https://semver.org); the adapter,
 the .NET tool and the VS Code extension share one version number.
 
+## Unreleased
+
+Fixes for the findings of a black-box DAP probe of 0.1.0 (regression tests: `FindingsTests`).
+
+- An unhandled exception always stops the debugger, whatever the exception filters; on Windows the exit code reported
+  afterwards is `0xE0434352` instead of 0.
+- Windows: program output that is not ASCII arrives intact (the debuggee's console is switched to UTF-8).
+- `stepIn` enters `async` methods; `next` past the end of an `async` method stops in the awaiting caller; a step never
+  stops in code without source (`justMyCode: false`); `stopAtEntry` works with an `async` top-level `Main`.
+- Strings longer than 4096 characters are displayed (shortened; whole in the `clipboard` context).
+- `attach` fails with a plain message for a process that does not exist, has no .NET runtime or is already being
+  debugged, and a refused second debugger no longer kills the process. Error messages no longer quote `HRESULT`s.
+- `variables` without a range returns at most 10 000 children; arrays and lists of primitives are read in one go
+  (a million elements: a second instead of minutes and gigabytes); paging deep into a `Dictionary` is O(page);
+  `cancel` and `disconnect` interrupt a long `variables` request.
+- Implicit evaluations (`ToString()`, property getters) time out after 1 s and are not repeated during the same stop;
+  new launch/attach option `allowImplicitFuncEval`. An evaluation that cannot be aborted is reported once (`output`,
+  category `important`) and later evaluations on that thread answer in plain words.
+- Malformed DAP input (broken JSON, a non-numeric `Content-Length`) no longer ends the session.
+- Enums of assemblies without symbols are shown by name; `DebuggerDisplay` with `\{` (anonymous types);
+  `$exception` can be evaluated in an `[External Code]` frame; invalid hit conditions and lines <= 0 are rejected with
+  a message; a condition that is not `bool` is reported; a missing `cwd` fails the launch on every platform.
+- Linux/macOS: the debuggee no longer outlives a killed adapter.
+
 ## 0.1.0 — unreleased
 
 First public version.

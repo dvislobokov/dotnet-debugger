@@ -1,4 +1,5 @@
 using ClrDebug;
+using DotnetDebugger.Engine.Values;
 
 namespace DotnetDebugger.Engine;
 
@@ -41,6 +42,9 @@ public sealed partial class DebugEngine
 
         /// <summary>Set when the file the user is looking at is not the one the module was compiled from.</summary>
         public string? Warning { get; set; }
+
+        /// <summary>Why the request makes no sense (line 0, a hit condition that is not one): such a breakpoint is never bound.</summary>
+        public string? Invalid { get; init; }
         public List<CodeLocation> Bound { get; } = [];
 
         public bool Verified => Bound.Count > 0;
@@ -48,9 +52,9 @@ public sealed partial class DebugEngine
 
         public BreakpointInfo ToInfo() => new(Id, Path, Verified, Resolved?.Line ?? RequestedLine,
             Resolved?.Column ?? RequestedColumn, Resolved?.EndLine, Resolved?.EndColumn,
-            Verified ? Warning : FunctionName != null
+            Verified ? Warning : Invalid ?? (FunctionName != null
                 ? $"No loaded module with symbols contains a function named '{FunctionName}'."
-                : "No loaded module with symbols contains code for this location.");
+                : "No loaded module with symbols contains code for this location."));
     }
 
     private readonly Dictionary<string, List<UserBreakpoint>> _breakpoints = new(
@@ -80,6 +84,7 @@ public sealed partial class DebugEngine
                 {
                     Id = ++_nextBreakpointId, Path = sourcePath, RequestedLine = r.Line, RequestedColumn = r.Column,
                     Condition = NullIfBlank(r.Condition), HitCondition = NullIfBlank(r.HitCondition), LogMessage = NullIfBlank(r.LogMessage),
+                    Invalid = r.Line <= 0 ? "Not a valid line number: lines start at 1." : ValidateHitCondition(r.HitCondition),
                 }).ToList();
                 return Install(created, c => _breakpoints[sourcePath] = c);
             });
@@ -99,6 +104,7 @@ public sealed partial class DebugEngine
                 {
                     Id = ++_nextBreakpointId, FunctionName = r.Name.Trim().TrimEnd('(', ')'),
                     Condition = NullIfBlank(r.Condition), HitCondition = NullIfBlank(r.HitCondition),
+                    Invalid = ValidateHitCondition(r.HitCondition),
                 }).ToList();
                 return Install(created, _functionBreakpoints.AddRange);
             });
@@ -152,7 +158,7 @@ public sealed partial class DebugEngine
 
     private bool TryBind(UserBreakpoint bp, LoadedModule module)
     {
-        if (module.Metadata is not { HasSymbols: true } metadata)
+        if (module.Metadata is not { HasSymbols: true } metadata || bp.Invalid != null)
             return false;
         try
         {
@@ -305,8 +311,14 @@ public sealed partial class DebugEngine
                     var evaluator = new Evaluator(this, TopFrame(threadId), allowCalls: true);
                     try
                     {
-                        if (bp.Condition != null && evaluator.EvaluateToHost(bp.Condition) is not true)
-                            continue;
+                        if (bp.Condition != null)
+                        {
+                            object? outcome = evaluator.EvaluateToHost(bp.Condition);
+                            if (outcome is not bool)
+                                throw new DebuggerException($"the condition must be of type bool, but it is {ValueInspector.FormatHost(outcome).Type ?? "null"}.");
+                            if (outcome is false)
+                                continue;
+                        }
                         if (!PassesHitCondition(bp, ++bp.HitCount))
                             continue;
                         if (bp.LogMessage != null)
@@ -356,26 +368,31 @@ public sealed partial class DebugEngine
     }
 
     // "5" / "==5": exactly the fifth hit;  ">=5", ">5", "<5", "<=5";  "%5": every fifth hit
-    private bool PassesHitCondition(UserBreakpoint bp, int hitCount)
+    private static bool TryParseHitCondition(string hitCondition, out string op, out int n)
     {
-        if (bp.HitCondition == null)
+        string text = hitCondition.Replace(" ", "");
+        op = new string(text.TakeWhile(c => !char.IsDigit(c)).ToArray());
+        return int.TryParse(text[op.Length..], System.Globalization.NumberStyles.None, null, out n) && n > 0
+            && op is "" or "=" or "==" or ">=" or ">" or "<=" or "<" or "%";
+    }
+
+    private static string? ValidateHitCondition(string? hitCondition) =>
+        string.IsNullOrWhiteSpace(hitCondition) || TryParseHitCondition(hitCondition, out _, out _)
+            ? null
+            : $"Invalid hit condition '{hitCondition}': expected a positive number, optionally preceded by ==, >=, >, <=, < or %.";
+
+    private static bool PassesHitCondition(UserBreakpoint bp, int hitCount)
+    {
+        if (bp.HitCondition == null || !TryParseHitCondition(bp.HitCondition, out string op, out int n))
             return true;
-        string text = bp.HitCondition.Replace(" ", "");
-        string op = new(text.TakeWhile(c => !char.IsDigit(c)).ToArray());
-        if (!int.TryParse(text[op.Length..], out int n) || n <= 0)
-        {
-            Log?.Invoke($"Ignoring invalid hit condition '{bp.HitCondition}'.");
-            return true;
-        }
         return op switch
         {
-            "" or "=" or "==" => hitCount == n,
             ">=" => hitCount >= n,
             ">" => hitCount > n,
             "<=" => hitCount <= n,
             "<" => hitCount < n,
             "%" => hitCount % n == 0,
-            _ => true,
+            _ => hitCount == n,
         };
     }
 
@@ -387,7 +404,12 @@ public sealed partial class DebugEngine
         for (int i = 0; i < template.Length; i++)
         {
             char c = template[i];
-            if ((c == '{' || c == '}') && i + 1 < template.Length && template[i + 1] == c)
+            if (c == '\\' && i + 1 < template.Length && template[i + 1] is '{' or '}' or '\\')
+            {
+                // [DebuggerDisplay("\{ A = {A} }")]: what the compiler writes for anonymous types
+                sb.Append(template[++i]);
+            }
+            else if ((c == '{' || c == '}') && i + 1 < template.Length && template[i + 1] == c)
             {
                 sb.Append(c);
                 i++;
