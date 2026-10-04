@@ -308,15 +308,16 @@ public class FindingsTests
         Assert.Contains("timed out", timeout, StringComparison.OrdinalIgnoreCase);
 
         // the thread is lost to the abandoned evaluation: say that, not CORDBG_E_FUNC_EVAL_BAD_START_POINT
+        // (.NET 8 on Windows can abort an evaluation waiting for a lock: then nothing is abandoned and nothing to tell)
         DapMessage later = client.RequestRaw("evaluate", new { expression = "evil.Fine", frameId = top.Id, context = "watch" });
         if (later.Success != true)
         {
             Assert.DoesNotContain("HRESULT", later.Message);
             Assert.DoesNotContain("CORDBG_", later.Message);
             Assert.Contains("evaluation", later.Message, StringComparison.OrdinalIgnoreCase);
+            // the user is told once, where it cannot be missed
+            client.WaitForEvent("output", e => e.GetBody<OutputEventBody>() is { Category: "important" } o && o.Output.Contains("evaluation", StringComparison.OrdinalIgnoreCase));
         }
-        // the user is told once, where it cannot be missed
-        client.WaitForEvent("output", e => e.GetBody<OutputEventBody>() is { Category: "important" } o && o.Output.Contains("evaluation", StringComparison.OrdinalIgnoreCase));
 
         // what needs no code to run still works, and the session can be ended
         Assert.Equal("2", client.Evaluate("1 + 1", top.Id).Result);
