@@ -102,6 +102,16 @@ public class FrameworkPdbTests
         Assert.Equal("Symbols loaded.", modules.Single(m => m.Name == "TestAppFxFull.exe").SymbolStatus);
     }
 
+    [WindowsFact]
+    public void TupleElementNamesOfLocals()
+    {
+        // a Windows PDB keeps them in a custom debug information record of the method
+        using var client = new DapClient();
+        var (_, top) = RunTo(client, "basic", "fx_locals");
+        Assert.Equal("\"five\"", client.Evaluate("pair.Label", top.Id).Result);
+        Assert.Equal("5", client.Evaluate("pair.Id", top.Id).Result);
+    }
+
     // ---------------------------------------------------------------- stepping
 
     [WindowsFact]

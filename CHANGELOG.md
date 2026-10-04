@@ -6,7 +6,7 @@ the .NET tool and the VS Code extension share one version number.
 ## 0.2.0 — unreleased
 
 .NET Framework 4.x on Windows (regression tests: `FrameworkTests`, `FrameworkLaunchTests`, `FrameworkDomainsTests`,
-`FrameworkPdbTests`, `FrameworkX86Tests`).
+`FrameworkPdbTests`).
 
 - Launch and attach for .NET Framework 4.x programs (the legacy ICorDebug of the installed framework; nothing extra
   to install). Breakpoints, stepping (incl. async), call stacks, variables and evaluation work as for .NET; values of
@@ -16,11 +16,11 @@ the .NET tool and the VS Code extension share one version number.
 - `integratedTerminal` / `externalTerminal` for Framework programs: the debugger creates the process with the
   terminal's console and standard handles.
 - Several AppDomains: breakpoints bind and types are found in every domain.
-- Windows (non-portable) PDBs are read (converted with `Microsoft.DiaSymReader.Converter`).
-- 32-bit (x86) debuggees, Framework and .NET: the adapter relays the session to a bundled win-x86 adapter
-  (`x86/` in the release archives and the VS Code extension; the .NET tool only with `-p:BundleX86Adapter=true`).
+- Windows (non-portable) PDBs are read: converted in memory to portable ones through `Microsoft.DiaSymReader.Native`.
 - With `"justMyCode": false` the framework's NGen images are disabled (`COMPlus_ZapDisable=1`) so that its code can be
   stepped into and inspected.
+- 32-bit programs and processes (x86, or AnyCPU preferring 32-bit, the default of old project templates) are refused
+  with a plain message before anything is started (`ThirtyTwoBitTests`): the adapter only debugs 64-bit processes.
 
 Fixes:
 

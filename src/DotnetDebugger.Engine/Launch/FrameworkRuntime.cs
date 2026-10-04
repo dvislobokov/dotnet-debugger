@@ -51,13 +51,6 @@ internal static class FrameworkRuntime
         }
     }
 
-    /// <summary>
-    /// The debugging library has to be of the bitness of the debuggee. An AnyCPU program runs as 32-bit when it prefers
-    /// to (the default of old project templates). The 64-bit adapter hands 32-bit programs to its 32-bit build before
-    /// they get here; this is the last line for when that build is not in the game.
-    /// </summary>
-    public static void VerifyBitness(string program) => ProcessBitness.VerifyMatches(program);
-
     /// <summary>Whether <paramref name="processId"/> has the .NET Framework 4 runtime loaded.</summary>
     [SupportedOSPlatform("windows")]
     public static bool IsLoadedIn(int processId)

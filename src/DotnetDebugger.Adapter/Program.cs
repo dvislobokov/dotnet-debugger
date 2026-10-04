@@ -97,7 +97,7 @@ else
 }
 
 using var connection = new DapConnection(input, output) { Trace = logWriter == null ? null : Log };
-using (var adapter = new DebugAdapter(connection, Log) { LogPath = logPath })
+using (var adapter = new DebugAdapter(connection, Log))
 {
     try
     {

@@ -1,25 +1,19 @@
 using System.Reflection.PortableExecutable;
 using System.Runtime.InteropServices;
-using System.Runtime.Versioning;
-using Microsoft.Win32;
 using Microsoft.Win32.SafeHandles;
 
 namespace DotnetDebugger.Engine.Launch;
 
 /// <summary>
 /// 32-bit processes on 64-bit Windows. ICorDebug lives in the debugger's process (mscordbi), so only a debugger of the
-/// debuggee's bitness can debug it: the 64-bit adapter hands such sessions to its 32-bit build.
+/// debuggee's bitness can debug it; there is no 32-bit build of the adapter, so such targets are turned away with a
+/// plain message before anything is started or attached to.
 /// </summary>
 public static class ProcessBitness
 {
     private const ushort ImageFileMachineI386 = 0x014C;
 
-    /// <summary>What to tell a user whose program the adapter at hand cannot debug because it is 32-bit.</summary>
-    public const string X86AdapterHint =
-        "Debugging it takes the 32-bit (win-x86) build of dotnet-debugger: the release archives and the VS Code extension " +
-        "for Windows bring it in the \"x86\" folder next to dotnet-debugger.exe, DOTNET_DEBUGGER_X86_ADAPTER (or the launch " +
-        "option \"x86Adapter\") can point to one, and an adapter run by dotnet (the .NET tool) uses an installed x86 .NET " +
-        "runtime (8 or newer). Alternatively build the program for x64, or AnyCPU without \"Prefer 32-bit\".";
+    private const string Hint = "Build it for x64, or AnyCPU without \"Prefer 32-bit\".";
 
     /// <summary>
     /// Whether <paramref name="program"/> runs as a 32-bit process when started on this machine; null if that cannot
@@ -77,72 +71,27 @@ public static class ProcessBitness
         return IsWow64Process(handle, out bool wow64) ? wow64 : null;
     }
 
-    /// <summary>
-    /// Throws when <paramref name="program"/> runs with a bitness other than this process', which the debugging library
-    /// cannot bridge.
-    /// </summary>
-    public static void VerifyMatches(string program)
+    /// <summary>Throws when <paramref name="program"/> runs with a bitness other than this process'.</summary>
+    public static void VerifyProgram(string program)
     {
-        if (Is32BitProgram(program) is not { } is32Bit || is32Bit != Environment.Is64BitProcess)
+        if (Is32BitProgram(program) is { } is32Bit)
+            Verify(is32Bit, $"'{Path.GetFileName(program)}'");
+    }
+
+    /// <summary>Throws when the running process <paramref name="processId"/> has a bitness other than this process'.</summary>
+    public static void VerifyProcess(int processId)
+    {
+        if (Is32BitProcess(processId) is { } is32Bit)
+            Verify(is32Bit, $"Process {processId}");
+    }
+
+    private static void Verify(bool is32Bit, string target)
+    {
+        if (is32Bit != Environment.Is64BitProcess)
             return;
-        string name = Path.GetFileName(program);
         throw new DebuggerException(is32Bit
-            ? $"'{name}' runs as a 32-bit process, which this (64-bit) adapter cannot debug. {X86AdapterHint}"
-            : $"'{name}' runs as a 64-bit process, which this 32-bit adapter cannot debug: use the 64-bit dotnet-debugger.");
-    }
-
-    /// <summary>
-    /// The dotnet host of an x86 .NET installation (64-bit Windows only), optionally only if it has a runtime of at least
-    /// <paramref name="minimumRuntimeMajor"/>.
-    /// </summary>
-    public static string? FindX86DotnetHost(int minimumRuntimeMajor = 0)
-    {
-        if (!OperatingSystem.IsWindows() || !Environment.Is64BitOperatingSystem)
-            return null;
-        var roots = new List<string?>
-        {
-            Environment.GetEnvironmentVariable("DOTNET_ROOT(x86)"),
-            InstallLocationFromRegistry(),
-            Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ProgramFilesX86), "dotnet"),
-        };
-        foreach (string? root in roots)
-        {
-            if (string.IsNullOrEmpty(root))
-                continue;
-            string host = Path.Combine(root, "dotnet.exe");
-            if (File.Exists(host) && (minimumRuntimeMajor == 0 || HasRuntime(root, minimumRuntimeMajor)))
-                return host;
-        }
-        return null;
-    }
-
-    private static bool HasRuntime(string root, int minimumMajor)
-    {
-        try
-        {
-            string shared = Path.Combine(root, "shared", "Microsoft.NETCore.App");
-            return Directory.Exists(shared) && Directory.EnumerateDirectories(shared)
-                .Any(d => Version.TryParse(Path.GetFileName(d).Split('-')[0], out Version? v) && v.Major >= minimumMajor);
-        }
-        catch (Exception e) when (e is IOException or UnauthorizedAccessException)
-        {
-            return false;
-        }
-    }
-
-    [SupportedOSPlatform("windows")]
-    private static string? InstallLocationFromRegistry()
-    {
-        try
-        {
-            using RegistryKey baseKey = RegistryKey.OpenBaseKey(RegistryHive.LocalMachine, RegistryView.Registry32);
-            using RegistryKey? key = baseKey.OpenSubKey(@"SOFTWARE\dotnet\Setup\InstalledVersions\x86");
-            return key?.GetValue("InstallLocation") as string;
-        }
-        catch (Exception e) when (e is IOException or UnauthorizedAccessException or System.Security.SecurityException)
-        {
-            return null;
-        }
+            ? $"{target} runs as a 32-bit process, which dotnet-debugger cannot debug. {Hint}"
+            : $"{target} runs as a 64-bit process, which this 32-bit dotnet-debugger cannot debug: use a 64-bit one.");
     }
 
     private const int ProcessQueryLimitedInformation = 0x1000;

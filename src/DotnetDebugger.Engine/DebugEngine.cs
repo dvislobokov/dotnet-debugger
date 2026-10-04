@@ -116,6 +116,8 @@ public sealed partial class DebugEngine : IDisposable
                 throw new DebuggerException("A debuggee is already running.");
             if (!File.Exists(options.Program))
                 throw new DebuggerException($"Program '{options.Program}' does not exist.");
+            // An AnyCPU program runs as 32-bit when it prefers to (the default of old .NET Framework project templates).
+            ProcessBitness.VerifyProgram(options.Program);
             _launching = true;
             _dbgShim ??= LoadDbgShim();
         }
@@ -132,7 +134,6 @@ public sealed partial class DebugEngine : IDisposable
             if (FrameworkRuntime.IsFrameworkProgram(options.Program))
             {
                 // the debugging library of .NET Framework has to create the process itself, in a terminal too
-                FrameworkRuntime.VerifyBitness(options.Program);
                 framework = CreateFrameworkCorDebug();
                 environment = FrameworkEnvironment(options);
             }
@@ -210,6 +211,7 @@ public sealed partial class DebugEngine : IDisposable
         {
             if (_processId != 0)
                 throw new DebuggerException("A debuggee is already running.");
+            ProcessBitness.VerifyProcess(processId);
             if (OperatingSystem.IsWindows() && FrameworkRuntime.IsLoadedIn(processId))
             {
                 AttachFramework(processId, justMyCode, sourceFileMap);

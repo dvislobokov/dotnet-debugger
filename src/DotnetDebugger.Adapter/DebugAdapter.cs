@@ -7,7 +7,7 @@ using ExceptionDetails = DotnetDebugger.Protocol.ExceptionDetails;
 namespace DotnetDebugger.Adapter;
 
 /// <summary>Translates DAP requests into <see cref="DebugEngine"/> calls and engine events into DAP events.</summary>
-internal sealed partial class DebugAdapter : IDisposable
+internal sealed class DebugAdapter : IDisposable
 {
     private readonly DapConnection _connection;
     private readonly Action<string> _log;
@@ -75,8 +75,6 @@ internal sealed partial class DebugAdapter : IDisposable
 
         while (_connection.Read() is { } message)
         {
-            if (RelayFromReader(message))
-                continue;
             if (message.Type == "response")
             {
                 _connection.CompleteRequest(message);
@@ -120,8 +118,6 @@ internal sealed partial class DebugAdapter : IDisposable
     {
         foreach (DapMessage message in _queue.GetConsumingEnumerable())
         {
-            if (RelayFromQueue(message))
-                continue;
             bool cancelled;
             lock (_cancelled)
             {
@@ -162,7 +158,6 @@ internal sealed partial class DebugAdapter : IDisposable
     {
         try
         {
-            PrepareHandOver(message);
             object? body = Dispatch(message);
             _connection.SendResponse(message, body);
             Interlocked.Exchange(ref _afterResponse, null)?.Invoke();
@@ -170,9 +165,6 @@ internal sealed partial class DebugAdapter : IDisposable
         catch (OperationCanceledException)
         {
             _connection.SendErrorResponse(message, "cancelled");
-        }
-        catch (HandedOverException)
-        {
         }
         catch (Exception e)
         {
@@ -234,7 +226,7 @@ internal sealed partial class DebugAdapter : IDisposable
             case "launch":
             {
                 _launchArguments = request.GetArguments<LaunchArguments>() ?? throw new DebuggerException("Missing launch arguments.");
-                Launch(_launchArguments, request);
+                Launch(_launchArguments);
                 return null;
             }
 
@@ -544,12 +536,10 @@ internal sealed partial class DebugAdapter : IDisposable
         }
     }
 
-    private void Launch(LaunchArguments args, DapMessage? request = null)
+    private void Launch(LaunchArguments args)
     {
         void Note(string text) => _connection.SendEvent("output", new OutputEventBody { Category = "console", Output = text });
         ResolvedLaunch launch = LaunchResolver.Resolve(args, Note);
-        if (request != null)
-            HandOverIfThirtyTwoBit(request, launch, args);
         launch = launch with { Program = DotnetDebugger.Engine.Launch.MacCodeSigning.ResolveDebuggableProgram(launch.Program, Note) };
 
         string? terminalKind = args.Console switch
@@ -657,9 +647,5 @@ internal sealed partial class DebugAdapter : IDisposable
         };
     }
 
-    public void Dispose()
-    {
-        _relay?.Dispose();
-        _engine.Dispose();
-    }
+    public void Dispose() => _engine.Dispose();
 }

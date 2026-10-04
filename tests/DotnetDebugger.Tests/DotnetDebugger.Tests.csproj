@@ -5,6 +5,8 @@
     <ImplicitUsings>enable</ImplicitUsings>
     <Nullable>enable</Nullable>
     <IsPackable>false</IsPackable>
+    <!-- the Windows-only debuggees below are outside the solution and must still get its configuration -->
+    <ShouldUnsetParentConfigurationAndPlatform>false</ShouldUnsetParentConfigurationAndPlatform>
   </PropertyGroup>
 
   <ItemGroup>
@@ -28,35 +30,22 @@
     <ProjectReference Include="..\AsyncMainApp\AsyncMainApp.csproj" ReferenceOutputAssembly="false" />
   </ItemGroup>
 
-  <!-- The .NET Framework debuggee only exists on Windows; elsewhere FrameworkTests skip themselves. -->
+  <!--
+    The .NET Framework debuggee only exists on Windows; elsewhere FrameworkTests skip themselves. The debuggees of this
+    and the next group are deliberately not in the solution: built from it as well, they would be built twice at the
+    same time (once more with TargetFramework=net48) into the same obj folder.
+  -->
   <ItemGroup Condition="'$(OS)' == 'Windows_NT'">
     <ProjectReference Include="..\TestAppFx\TestAppFx.csproj" ReferenceOutputAssembly="false" SkipGetTargetFrameworkProperties="true" SetTargetFramework="TargetFramework=net48" />
     <ProjectReference Include="..\TestAppFxFull\TestAppFxFull.csproj" ReferenceOutputAssembly="false" SkipGetTargetFrameworkProperties="true" SetTargetFramework="TargetFramework=net48" />
     <ProjectReference Include="..\AsyncMainAppFull\AsyncMainAppFull.csproj" ReferenceOutputAssembly="false" />
   </ItemGroup>
 
-  <!-- 32-bit debuggees of FrameworkX86Tests (Windows only). -->
+  <!-- 32-bit programs, which the adapter has to refuse (ThirtyTwoBitTests, Windows only). -->
   <ItemGroup Condition="'$(OS)' == 'Windows_NT'">
     <ProjectReference Include="..\TestAppFx32\TestAppFx32.csproj" ReferenceOutputAssembly="false" SkipGetTargetFrameworkProperties="true" SetTargetFramework="TargetFramework=net48" />
     <ProjectReference Include="..\TestAppFxAnyCpu32\TestAppFxAnyCpu32.csproj" ReferenceOutputAssembly="false" SkipGetTargetFrameworkProperties="true" SetTargetFramework="TargetFramework=net48" />
     <ProjectReference Include="..\TestApp32\TestApp32.csproj" ReferenceOutputAssembly="false" />
   </ItemGroup>
-
-  <!--
-    The 32-bit adapter, which the 64-bit one hands 32-bit debuggees to (FrameworkX86Tests, Windows only). It is published
-    self-contained into the "x86" folder next to the adapter the tests start, where the release archives have it too.
-    A separate artifacts path keeps the win-x86 restore out of the regular obj folders; Inputs/Outputs make it a no-op
-    while the sources are unchanged.
-  -->
-  <PropertyGroup Condition="'$(OS)' == 'Windows_NT'">
-    <X86AdapterRoot>$([System.IO.Path]::GetFullPath('$(MSBuildThisFileDirectory)..\..'))</X86AdapterRoot>
-    <X86AdapterDirectory>$(X86AdapterRoot)\src\DotnetDebugger.Adapter\bin\$(Configuration)\$(DebuggerTargetFramework)\x86</X86AdapterDirectory>
-  </PropertyGroup>
-  <ItemGroup Condition="'$(OS)' == 'Windows_NT'">
-    <X86AdapterInput Include="$(X86AdapterRoot)\src\**\*.cs;$(X86AdapterRoot)\src\**\*.csproj;$(X86AdapterRoot)\Directory.Build.props" Exclude="$(X86AdapterRoot)\src\**\bin\**;$(X86AdapterRoot)\src\**\obj\**" />
-  </ItemGroup>
-  <Target Name="PublishX86Adapter" AfterTargets="Build" Condition="'$(OS)' == 'Windows_NT'" Inputs="@(X86AdapterInput)" Outputs="$(X86AdapterDirectory)\dotnet-debugger.exe">
-    <Exec Command="dotnet publish &quot;$(X86AdapterRoot)\src\DotnetDebugger.Adapter\DotnetDebugger.Adapter.csproj&quot; -c $(Configuration) -r win-x86 --self-contained true -p:PublishSingleFile=true -p:EnableCompressionInSingleFile=true -p:DebugType=embedded -p:SatelliteResourceLanguages=en --artifacts-path &quot;$(X86AdapterRoot)\artifacts\x86-adapter-build&quot; -o &quot;$(X86AdapterDirectory)&quot; -nologo -v q" />
-  </Target>
 
 </Project>

@@ -1,9 +1,8 @@
 <Project Sdk="Microsoft.NET.Sdk">
 
   <!--
-    The .NET Framework debuggee built for x86 (FrameworkX86Tests, Windows only): the sources of TestAppFx, so markers,
-    frame names and values are the same; only the process is 32-bit, which the 64-bit adapter debugs through its
-    32-bit sibling.
+    The .NET Framework debuggee built for x86 (ThirtyTwoBitTests, Windows only): the sources of TestAppFx as a 32-bit
+    process, which the adapter refuses to launch or attach to.
   -->
   <PropertyGroup>
     <OutputType>Exe</OutputType>

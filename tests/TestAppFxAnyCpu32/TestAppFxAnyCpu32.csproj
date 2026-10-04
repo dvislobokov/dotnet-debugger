@@ -2,7 +2,8 @@
 
   <!--
     The .NET Framework debuggee as old project templates build it: AnyCPU with "Prefer 32-bit", which Windows starts as
-    a 32-bit process (FrameworkX86Tests, Windows only). The sources are those of TestAppFx.
+    a 32-bit process and the adapter therefore refuses to launch (ThirtyTwoBitTests, Windows only). The sources are
+    those of TestAppFx.
   -->
   <PropertyGroup>
     <OutputType>Exe</OutputType>

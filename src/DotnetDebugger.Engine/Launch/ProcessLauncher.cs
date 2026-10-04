@@ -99,9 +99,6 @@ internal static class ProcessLauncher
         string? current = Environment.ProcessPath;
         if (current != null && Path.GetFileName(current).Equals(exe, StringComparison.OrdinalIgnoreCase))
             return current;
-        // the 32-bit adapter debugs dlls that only run as x86, which only an x86 host can run
-        if (!Environment.Is64BitProcess && ProcessBitness.FindX86DotnetHost() is { } x86Host)
-            return x86Host;
 
         var dirs = new List<string?> { Environment.GetEnvironmentVariable("DOTNET_ROOT") };
         dirs.AddRange((Environment.GetEnvironmentVariable("PATH") ?? "").Split(Path.PathSeparator));

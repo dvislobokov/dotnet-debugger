@@ -27,13 +27,5 @@ for rid in "$@"; do
   fi
   dotnet publish "$project" -c "${CONFIGURATION:-Release}" -r "$rid" $flavor \
     -o "$output" -nologo -v q -p:DebugType=embedded -p:SatelliteResourceLanguages=en
-  # Windows: the 64-bit adapter hands 32-bit debuggees to a 32-bit build of itself in x86/ (see publish.ps1)
-  case "$rid" in
-    win-x64|win-arm64)
-      if [ "${NO_X86:-false}" != "true" ]; then
-        dotnet publish "$project" -c "${CONFIGURATION:-Release}" -r win-x86 --self-contained true -p:PublishSingleFile=true \
-          -p:EnableCompressionInSingleFile=true -o "$output/x86" -nologo -v q -p:DebugType=embedded -p:SatelliteResourceLanguages=en
-      fi ;;
-  esac
   echo "Published $rid -> $output"
 done

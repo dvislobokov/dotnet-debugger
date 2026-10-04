@@ -1,13 +1,11 @@
-using System.Collections.Immutable;
 using System.Reflection.Metadata;
 using System.Reflection.PortableExecutable;
-using Microsoft.DiaSymReader.Tools;
 
 namespace DotnetDebugger.Engine.Symbols;
 
 /// <summary>
 /// Windows ("full"/"pdbonly") PDBs, the default of old non-SDK .NET Framework projects. They are converted in memory to
-/// a portable PDB (Microsoft.DiaSymReader.Converter), so that everything downstream - sequence points, local scopes,
+/// a portable PDB (WindowsPdbConverter), so that everything downstream - sequence points, local scopes,
 /// async stepping information, source paths - is read the one way. The converter reads Windows PDBs through the native
 /// Microsoft.DiaSymReader.Native.&lt;arch&gt;.dll, which only exists for Windows; elsewhere such PDBs mean "no symbols".
 /// </summary>
@@ -45,25 +43,25 @@ internal static class WindowsPdb
             return null;
         }
 
-        if (GetCodeView(pe) is not { } codeView)
+        if (GetCodeViewEntry(pe) is not { } codeViewEntry)
             return null;
 
         try
         {
-            using var portable = new MemoryStream();
-            PdbConverter.Default.ConvertWindowsToPortable(pe, pdb, portable);
-            var provider = MetadataReaderProvider.FromPortablePdbImage(ImmutableArray.Create(portable.GetBuffer(), 0, (int)portable.Length));
-
-            // The converted PDB keeps the GUID of the Windows one, which the module names in its CodeView entry.
-            MetadataReader reader = provider.GetMetadataReader();
-            if (reader.DebugMetadataHeader == null || new BlobContentId(reader.DebugMetadataHeader.Id).Guid != codeView.Guid)
+            MetadataReaderProvider provider;
+            try
             {
-                provider.Dispose();
+                provider = WindowsPdbConverter.Convert(pe, pdb, codeViewEntry);
+            }
+            catch (InvalidDataException)
+            {
                 log?.Invoke($"Symbols '{pdbPath}' do not match the module.");
                 return null;
             }
+
             // Public (stripped) PDBs, such as those of .NET Framework itself on the Microsoft symbol server, have no
             // source information at all: no better than none.
+            MetadataReader reader = provider.GetMetadataReader();
             if (reader.Documents.Count == 0)
             {
                 provider.Dispose();
@@ -82,12 +80,15 @@ internal static class WindowsPdb
     }
 
     /// <summary>The CodeView entry of a module whose PDB is a Windows one.</summary>
-    public static CodeViewDebugDirectoryData? GetCodeView(PEReader pe)
+    public static CodeViewDebugDirectoryData? GetCodeView(PEReader pe) =>
+        GetCodeViewEntry(pe) is { } entry ? pe.ReadCodeViewDebugDirectoryData(entry) : null;
+
+    private static DebugDirectoryEntry? GetCodeViewEntry(PEReader pe)
     {
         foreach (DebugDirectoryEntry entry in pe.ReadDebugDirectory())
         {
             if (entry.Type == DebugDirectoryEntryType.CodeView && !entry.IsPortableCodeView)
-                return pe.ReadCodeViewDebugDirectoryData(entry);
+                return entry;
         }
         return null;
     }

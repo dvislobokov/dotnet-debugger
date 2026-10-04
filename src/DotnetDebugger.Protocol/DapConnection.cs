@@ -178,18 +178,11 @@ public sealed class DapConnection : IDisposable
     public void SendEvent(string name, object? body = null) =>
         Send(new DapMessage { Type = "event", Event = name, Body = body });
 
-    /// <summary>
-    /// Passes on a message that was received from another peer (the relay to the 32-bit adapter). Renumbered, it gets
-    /// this connection's next sequence number, which is returned; otherwise it goes out as it came.
-    /// </summary>
-    public int Relay(DapMessage msg, bool renumber) => Send(msg, renumber);
-
-    private int Send(DapMessage msg, bool renumber = true)
+    private int Send(DapMessage msg)
     {
         lock (_writeLock)
         {
-            if (renumber)
-                msg.Seq = ++_seq;
+            msg.Seq = ++_seq;
             byte[] payload = JsonSerializer.SerializeToUtf8Bytes(msg, DapJson.Options);
             byte[] header = Encoding.ASCII.GetBytes($"Content-Length: {payload.Length}\r\n\r\n");
             Trace?.Invoke("-> " + Encoding.UTF8.GetString(payload));
