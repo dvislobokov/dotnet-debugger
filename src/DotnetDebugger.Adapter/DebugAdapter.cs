@@ -7,7 +7,7 @@ using ExceptionDetails = DotnetDebugger.Protocol.ExceptionDetails;
 namespace DotnetDebugger.Adapter;
 
 /// <summary>Translates DAP requests into <see cref="DebugEngine"/> calls and engine events into DAP events.</summary>
-internal sealed class DebugAdapter : IDisposable
+internal sealed partial class DebugAdapter : IDisposable
 {
     private readonly DapConnection _connection;
     private readonly Action<string> _log;
@@ -55,6 +55,7 @@ internal sealed class DebugAdapter : IDisposable
             _connection.SendEvent("thread", new ThreadEventBody { Reason = started ? "started" : "exited", ThreadId = id });
         engine.ModuleLoaded += module => _connection.SendEvent("module", new ModuleEventBody { Module = ToModule(module) });
         engine.ModuleChanged += module => _connection.SendEvent("module", new ModuleEventBody { Reason = "changed", Module = ToModule(module) });
+        engine.ModuleUnloaded += module => _connection.SendEvent("module", new ModuleEventBody { Reason = "removed", Module = ToModule(module) });
         engine.BreakpointChanged += bp => _connection.SendEvent("breakpoint", new BreakpointEventBody { Breakpoint = ToBreakpoint(bp) });
         engine.Exited += exitCode =>
         {
@@ -74,6 +75,8 @@ internal sealed class DebugAdapter : IDisposable
 
         while (_connection.Read() is { } message)
         {
+            if (RelayFromReader(message))
+                continue;
             if (message.Type == "response")
             {
                 _connection.CompleteRequest(message);
@@ -117,6 +120,8 @@ internal sealed class DebugAdapter : IDisposable
     {
         foreach (DapMessage message in _queue.GetConsumingEnumerable())
         {
+            if (RelayFromQueue(message))
+                continue;
             bool cancelled;
             lock (_cancelled)
             {
@@ -157,6 +162,7 @@ internal sealed class DebugAdapter : IDisposable
     {
         try
         {
+            PrepareHandOver(message);
             object? body = Dispatch(message);
             _connection.SendResponse(message, body);
             Interlocked.Exchange(ref _afterResponse, null)?.Invoke();
@@ -164,6 +170,9 @@ internal sealed class DebugAdapter : IDisposable
         catch (OperationCanceledException)
         {
             _connection.SendErrorResponse(message, "cancelled");
+        }
+        catch (HandedOverException)
+        {
         }
         catch (Exception e)
         {
@@ -225,7 +234,7 @@ internal sealed class DebugAdapter : IDisposable
             case "launch":
             {
                 _launchArguments = request.GetArguments<LaunchArguments>() ?? throw new DebuggerException("Missing launch arguments.");
-                Launch(_launchArguments);
+                Launch(_launchArguments, request);
                 return null;
             }
 
@@ -535,10 +544,12 @@ internal sealed class DebugAdapter : IDisposable
         }
     }
 
-    private void Launch(LaunchArguments args)
+    private void Launch(LaunchArguments args, DapMessage? request = null)
     {
         void Note(string text) => _connection.SendEvent("output", new OutputEventBody { Category = "console", Output = text });
         ResolvedLaunch launch = LaunchResolver.Resolve(args, Note);
+        if (request != null)
+            HandOverIfThirtyTwoBit(request, launch, args);
         launch = launch with { Program = DotnetDebugger.Engine.Launch.MacCodeSigning.ResolveDebuggableProgram(launch.Program, Note) };
 
         string? terminalKind = args.Console switch
@@ -646,5 +657,9 @@ internal sealed class DebugAdapter : IDisposable
         };
     }
 
-    public void Dispose() => _engine.Dispose();
+    public void Dispose()
+    {
+        _relay?.Dispose();
+        _engine.Dispose();
+    }
 }

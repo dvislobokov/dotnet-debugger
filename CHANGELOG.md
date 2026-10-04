@@ -3,7 +3,29 @@
 All notable changes to this project are documented here. Versions follow [SemVer](https://semver.org); the adapter,
 the .NET tool and the VS Code extension share one version number.
 
-## Unreleased
+## 0.2.0 — unreleased
+
+.NET Framework 4.x on Windows (regression tests: `FrameworkTests`, `FrameworkLaunchTests`, `FrameworkDomainsTests`,
+`FrameworkPdbTests`, `FrameworkX86Tests`).
+
+- Launch and attach for .NET Framework 4.x programs (the legacy ICorDebug of the installed framework; nothing extra
+  to install). Breakpoints, stepping (incl. async), call stacks, variables and evaluation work as for .NET; values of
+  `mscorlib` collections, dates and decimals are read from its own field layouts.
+- Legacy (non-SDK) projects are built with `MSBuild.exe` (found through `vswhere` or `MSBUILD_EXE_PATH`); new launch
+  option `framework` picks one target of a multi-targeted project.
+- `integratedTerminal` / `externalTerminal` for Framework programs: the debugger creates the process with the
+  terminal's console and standard handles.
+- Several AppDomains: breakpoints bind and types are found in every domain.
+- Windows (non-portable) PDBs are read (converted with `Microsoft.DiaSymReader.Converter`).
+- 32-bit (x86) debuggees, Framework and .NET: the adapter relays the session to a bundled win-x86 adapter
+  (`x86/` in the release archives and the VS Code extension; the .NET tool only with `-p:BundleX86Adapter=true`).
+- With `"justMyCode": false` the framework's NGen images are disabled (`COMPlus_ZapDisable=1`) so that its code can be
+  stepped into and inspected.
+
+Fixes:
+
+- Linux/macOS, .NET 8: expanding an object whose property getter loops without calls or allocations no longer hangs
+  the adapter after "The debuggee cannot be stopped" (the `variables` request is answered and the session can be ended).
 
 Fixes for the findings of a black-box DAP probe of 0.1.0 (regression tests: `FindingsTests`).
 

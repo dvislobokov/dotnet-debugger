@@ -32,7 +32,7 @@ public sealed partial class DebugEngine
 
     Func<CorDebugValue?>? IEvalHost.CreateTypeProxy(string proxyTypeName, Func<CorDebugValue?> target, InspectionContext context)
     {
-        if (FindType(proxyTypeName) is not { } found)
+        if (FindType(proxyTypeName, AppDomainOf(context)) is not { } found)
             return null;
         MethodDescription? constructor = found.Module.Metadata!.GetMethods(found.Token, ".ctor").FirstOrDefault(m => !m.IsStatic && m.ParameterTypes.Length == 1);
         CorDebugValue? self = target();
@@ -53,8 +53,8 @@ public sealed partial class DebugEngine
     Func<CorDebugValue?> IEvalHost.EnumerateToArray(Func<CorDebugValue?> sequence, InspectionContext context)
     {
         // Enumerable.ToArray(Enumerable.Cast<object>(sequence)): works for any IEnumerable without knowing its element type
-        var enumerable = FindType("System.Linq.Enumerable") ?? throw new DebuggerException("System.Linq is not loaded in the debuggee.");
-        var objectType = FindType("System.Object") ?? throw new DebuggerException("System.Object not found.");
+        var enumerable = FindType("System.Linq.Enumerable", AppDomainOf(context)) ?? throw new DebuggerException("System.Linq is not loaded in the debuggee.");
+        var objectType = FindType("System.Object", AppDomainOf(context)) ?? throw new DebuggerException("System.Object not found.");
         ICorDebugType[] ofObject = [objectType.Module.Module.GetClassFromToken(new mdTypeDef(objectType.Token)).GetParameterizedType(CorElementType.Class, 0, []).Raw];
 
         CorDebugFunction Method(string name) => enumerable.Module.Module.GetFunctionFromToken(new mdMethodDef(
@@ -91,7 +91,7 @@ public sealed partial class DebugEngine
                 // only within the method some thread is currently executing
                 bool reachable = process.Threads.Any(t => TryGet(() => t.ActiveFrame) is CorDebugILFrame frame
                     && frame.Function.Token.Value == (uint)location.MethodToken
-                    && frame.Function.Module.BaseAddress.Value == module.Module.BaseAddress.Value);
+                    && KeyOf(frame.Function.Module) == module.Key);
                 if (!reachable)
                     continue;
                 int id = ++_nextHandle;
@@ -113,7 +113,7 @@ public sealed partial class DebugEngine
                 throw new DebuggerException("Unknown goto target.");
             if (thread.ActiveFrame is not CorDebugILFrame frame
                 || frame.Function.Token.Value != (uint)target.Location.MethodToken
-                || frame.Function.Module.BaseAddress.Value != target.Module.Module.BaseAddress.Value)
+                || KeyOf(frame.Function.Module) != target.Module.Key)
             {
                 throw new DebuggerException("The next statement can only be set within the method at the top of the stack.");
             }

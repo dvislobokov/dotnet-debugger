@@ -318,6 +318,12 @@ public sealed partial class DebugEngine : IEvalHost
 
     private void ReleaseStrongHandles()
     {
+        // once Stop has hung, disposing a handle blocks behind it as well: the handles are dropped instead
+        if (_cannotSynchronize)
+        {
+            _strongHandles.Clear();
+            return;
+        }
         foreach (CorDebugHandleValue handle in _strongHandles)
         {
             try

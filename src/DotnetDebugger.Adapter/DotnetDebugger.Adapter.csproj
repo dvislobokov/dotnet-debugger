@@ -36,4 +36,47 @@
     <None Include="..\..\docs\tool-readme.md" Pack="true" PackagePath="README.md" />
   </ItemGroup>
 
+  <!--
+    The Windows PDB reader (Microsoft.DiaSymReader.Native, ~1.8 MB per architecture) is needed under
+    runtimes/win-x64|win-arm64|win-x86/native only. Its package also has runtimes/win/native with all four architectures
+    again (meant for packages.config projects) and 32-bit ARM, which .NET does not run on any more: dropped from
+    RID-agnostic builds, the .NET tool among them. RID-specific publishing only ever takes the one for its RID.
+  -->
+  <Target Name="TrimDiaSymReaderNative" AfterTargets="ResolvePackageAssets">
+    <ItemGroup>
+      <RuntimeTargetsCopyLocalItems Remove="@(RuntimeTargetsCopyLocalItems)"
+        Condition="'%(RuntimeTargetsCopyLocalItems.NuGetPackageId)' == 'Microsoft.DiaSymReader.Native' and ('%(RuntimeTargetsCopyLocalItems.RuntimeIdentifier)' == 'win' or '%(RuntimeTargetsCopyLocalItems.RuntimeIdentifier)' == 'win-arm')" />
+    </ItemGroup>
+  </Target>
+
+  <!--
+    A self-contained Windows runtime brings the same native reader itself, but marks it "drop from single file" (the
+    runtime only wants it for line numbers in stack traces): the single-file adapter would end up without it. Kept next
+    to the executable instead, like dbgshim.
+  -->
+  <Target Name="KeepDiaSymReaderNativeNextToSingleFile" AfterTargets="ComputeResolvedFilesToPublishList" Condition="'$(PublishSingleFile)' == 'true'">
+    <ItemGroup>
+      <!-- _FilesToDrop: what ComputeResolvedFilesToPublishList has just removed for being DropFromSingleFile -->
+      <ResolvedFileToPublish Include="@(_FilesToDrop)"
+        Condition="$([System.String]::Copy('%(_FilesToDrop.Filename)').StartsWith('Microsoft.DiaSymReader.Native.'))"
+        DropFromSingleFile="false" ExcludeFromSingleFile="true" />
+    </ItemGroup>
+  </Target>
+
+  <!--
+    Opt-in (dotnet pack -p:BundleX86Adapter=true): the 32-bit adapter, self-contained, in "x86" of the .NET tool, for
+    32-bit debuggees on Windows machines without an x86 .NET runtime (about +37 MB). Without it the tool runs itself
+    with an installed x86 .NET for them (see X86Adapter).
+  -->
+  <PropertyGroup Condition="'$(BundleX86Adapter)' == 'true'">
+    <TargetsForTfmSpecificContentInPackage>$(TargetsForTfmSpecificContentInPackage);AddX86AdapterToToolPackage</TargetsForTfmSpecificContentInPackage>
+    <X86AdapterPackDirectory>$(MSBuildProjectDirectory)\$(BaseIntermediateOutputPath)x86-adapter</X86AdapterPackDirectory>
+  </PropertyGroup>
+  <Target Name="AddX86AdapterToToolPackage">
+    <Exec Command="dotnet publish &quot;$(MSBuildProjectFullPath)&quot; -c $(Configuration) -r win-x86 --self-contained true -p:PublishSingleFile=true -p:EnableCompressionInSingleFile=true -p:DebugType=embedded -p:SatelliteResourceLanguages=en -p:BundleX86Adapter=false --artifacts-path &quot;$(X86AdapterPackDirectory)-build&quot; -o &quot;$(X86AdapterPackDirectory)&quot; -nologo -v q" />
+    <ItemGroup>
+      <TfmSpecificPackageFile Include="$(X86AdapterPackDirectory)\*" PackagePath="tools/$(TargetFramework)/any/x86/" />
+    </ItemGroup>
+  </Target>
+
 </Project>

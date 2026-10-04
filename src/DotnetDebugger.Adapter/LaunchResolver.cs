@@ -24,9 +24,12 @@ internal static class LaunchResolver
 
         if (projectFile != null)
         {
+            string? msbuild = FindMSBuildFor(projectFile, output);
+            string? framework = args.Framework;
+            if (program == null)
+                (program, framework) = GetTargetPath(msbuild, projectFile, args.Configuration, args.Framework, output);
             if (args.Build)
-                Build(projectFile, args.Configuration, output);
-            program ??= GetTargetPath(projectFile, args.Configuration);
+                Build(msbuild, projectFile, args.Configuration, framework, output);
         }
         if (string.IsNullOrEmpty(program))
             throw new DebuggerException("Either 'program' or 'project' is required for launch.");
@@ -110,32 +113,121 @@ internal static class LaunchResolver
         throw new DebuggerException($"Project '{project}' does not exist.");
     }
 
-    private static void Build(string projectFile, string? configuration, Action<string> output)
+    // A non-SDK-style project is built with MSBuild.exe of Visual Studio (see MSBuildLocator); null: with `dotnet`.
+    private static string? FindMSBuildFor(string projectFile, Action<string> output)
     {
-        output($"Building {Path.GetFileName(projectFile)}...{Environment.NewLine}");
-        var arguments = new List<string> { "build", projectFile, "-nologo", "-v", "q", "-clp:NoSummary", "-nodeReuse:false" };
-        if (!string.IsNullOrEmpty(configuration))
-            arguments.AddRange(["-c", configuration]);
-        (int exitCode, _) = RunDotnet(arguments, line => output(line + Environment.NewLine));
+        if (!MSBuildLocator.IsLegacyProject(projectFile))
+            return null;
+        if (MSBuildLocator.MSBuildExe is { } msbuild)
+            return msbuild;
+        output($"{Path.GetFileName(projectFile)} is not an SDK-style project and MSBuild.exe of Visual Studio was not found: trying `dotnet`, " +
+            $"which builds such projects only when they need nothing from Visual Studio.{Environment.NewLine}");
+        return null;
+    }
+
+    private static void Build(string? msbuild, string projectFile, string? configuration, string? framework, Action<string> output)
+    {
+        List<string> arguments;
+        if (msbuild != null)
+        {
+            output($"Building {Path.GetFileName(projectFile)} with {msbuild}...{Environment.NewLine}");
+            // packages.config is restored too (MSBuild 16.5+), PackageReference anyway
+            arguments = [projectFile, "-nologo", "-v:q", "-clp:NoSummary", "-nodeReuse:false", "-restore", "-p:RestorePackagesConfig=true"];
+            if (!string.IsNullOrEmpty(configuration))
+                arguments.Add("-p:Configuration=" + configuration);
+        }
+        else
+        {
+            output($"Building {Path.GetFileName(projectFile)}...{Environment.NewLine}");
+            arguments = ["build", projectFile, "-nologo", "-v", "q", "-clp:NoSummary", "-nodeReuse:false"];
+            if (!string.IsNullOrEmpty(configuration))
+                arguments.AddRange(["-c", configuration]);
+            if (!string.IsNullOrEmpty(framework))
+                arguments.AddRange(["-f", framework]);
+        }
+        (int exitCode, _) = RunDotnet(arguments, line => output(line + Environment.NewLine), msbuild);
         if (exitCode != 0)
             throw new DebuggerException($"The build of '{Path.GetFileName(projectFile)}' failed (exit code {exitCode}); see the debug console.");
     }
 
-    private static string GetTargetPath(string projectFile, string? configuration)
+    /// <summary>
+    /// The output assembly, evaluated (not built). A project with several target frameworks has none of its own: the
+    /// requested one is used, else the first one this machine can run (the one Visual Studio debugs, too).
+    /// </summary>
+    private static (string Path, string? Framework) GetTargetPath(string? msbuild, string projectFile, string? configuration, string? framework,
+        Action<string> output)
     {
-        var arguments = new List<string> { "msbuild", projectFile, "-nologo", "-getProperty:TargetPath" };
-        if (!string.IsNullOrEmpty(configuration))
-            arguments.Add("-p:Configuration=" + configuration);
-        (int exitCode, string stdout) = RunDotnet(arguments, null);
-        string targetPath = stdout.Trim();
-        if (exitCode != 0 || targetPath.Length == 0 || targetPath.Contains('\n'))
-            throw new DebuggerException($"Could not determine the output assembly of '{Path.GetFileName(projectFile)}': {targetPath}");
-        return targetPath;
+        string name = Path.GetFileName(projectFile);
+        Dictionary<string, string> properties = GetProperties(msbuild, projectFile, configuration, null);
+        string targetFrameworks = properties.GetValueOrDefault("TargetFrameworks", "").Trim();
+        string[] frameworks = targetFrameworks.Split(';', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
+        if (frameworks.Length == 0)
+        {
+            string single = properties.GetValueOrDefault("TargetFramework", "");
+            if (!string.IsNullOrEmpty(framework) && single.Length > 0 && !string.Equals(framework, single, StringComparison.OrdinalIgnoreCase))
+                throw new DebuggerException($"'{name}' does not target '{framework}': it targets {single}.");
+        }
+        else
+        {
+            if (string.IsNullOrEmpty(framework))
+            {
+                framework = frameworks.FirstOrDefault(CanRunHere) ?? frameworks[0];
+                if (frameworks.Length > 1)
+                    output($"{name} targets several frameworks ({targetFrameworks}): debugging {framework}. Set \"framework\" to choose another one.{Environment.NewLine}");
+            }
+            else if (!frameworks.Contains(framework, StringComparer.OrdinalIgnoreCase))
+            {
+                throw new DebuggerException($"'{name}' does not target '{framework}': it targets {targetFrameworks}.");
+            }
+            properties = GetProperties(msbuild, projectFile, configuration, framework);
+        }
+
+        string targetPath = properties.GetValueOrDefault("TargetPath", "");
+        if (targetPath.Length == 0)
+            throw new DebuggerException($"Could not determine the output assembly of '{name}'.");
+        return (targetPath, framework);
+
+        // .NET Framework only runs on Windows, and a library targets nothing to run
+        static bool CanRunHere(string tfm) =>
+            !tfm.StartsWith("netstandard", StringComparison.OrdinalIgnoreCase)
+            && (OperatingSystem.IsWindows() || !(tfm.Length > 3 && char.IsDigit(tfm[3]) && !tfm.Contains('.')));
     }
 
-    private static (int ExitCode, string Output) RunDotnet(List<string> arguments, Action<string>? onLine)
+    // Several properties come as JSON, in which anything that is not ASCII is escaped: MSBuild.exe writes to a pipe in
+    // the OEM code page, so a plain path would not survive.
+    private static Dictionary<string, string> GetProperties(string? msbuild, string projectFile, string? configuration, string? framework)
     {
-        var startInfo = new ProcessStartInfo("dotnet")
+        var arguments = new List<string> { projectFile, "-nologo", "-getProperty:TargetPath", "-getProperty:TargetFramework", "-getProperty:TargetFrameworks" };
+        if (msbuild == null)
+            arguments.Insert(0, "msbuild");
+        if (!string.IsNullOrEmpty(configuration))
+            arguments.Add("-p:Configuration=" + configuration);
+        if (!string.IsNullOrEmpty(framework))
+            arguments.Add("-p:TargetFramework=" + framework);
+        (int exitCode, string text) = RunDotnet(arguments, null, msbuild);
+
+        string name = Path.GetFileName(projectFile);
+        int start = text.IndexOf('{'), end = text.LastIndexOf('}');
+        if (exitCode == 0 && start >= 0 && end > start)
+        {
+            try
+            {
+                using JsonDocument json = JsonDocument.Parse(text[start..(end + 1)]);
+                return json.RootElement.GetProperty("Properties").EnumerateObject().ToDictionary(p => p.Name, p => p.Value.GetString() ?? "");
+            }
+            catch (Exception e) when (e is JsonException or KeyNotFoundException or InvalidOperationException)
+            {
+            }
+        }
+        if (msbuild != null && text.Contains("MSB1001", StringComparison.Ordinal))
+            throw new DebuggerException($"{msbuild} cannot report the output assembly of '{name}' (MSBuild 17.8 or later can): set \"program\" to it.");
+        throw new DebuggerException($"Could not determine the output assembly of '{name}': {text.Trim()}");
+    }
+
+    /// <param name="msbuild">MSBuild.exe to run instead of `dotnet`.</param>
+    private static (int ExitCode, string Output) RunDotnet(List<string> arguments, Action<string>? onLine, string? msbuild = null)
+    {
+        var startInfo = new ProcessStartInfo(msbuild ?? "dotnet")
         {
             RedirectStandardOutput = true,
             RedirectStandardError = true,
@@ -148,13 +240,14 @@ internal static class LaunchResolver
         foreach (string argument in arguments)
             startInfo.ArgumentList.Add(argument);
         startInfo.Environment["DOTNET_CLI_UI_LANGUAGE"] = "en";
+        startInfo.Environment["VSLANG"] = "1033"; // the same for MSBuild.exe
         startInfo.Environment["DOTNET_NOLOGO"] = "1";
         // build servers outliving the command would keep our pipes open and WaitForExit waiting
         startInfo.Environment["MSBUILDDISABLENODEREUSE"] = "1";
         startInfo.Environment["UseSharedCompilation"] = "false";
 
         var collected = new StringBuilder();
-        using Process process = Process.Start(startInfo) ?? throw new DebuggerException("Failed to start 'dotnet'.");
+        using Process process = Process.Start(startInfo) ?? throw new DebuggerException($"Failed to start '{startInfo.FileName}'.");
         process.StandardInput.Close();
         void OnData(object _, DataReceivedEventArgs e)
         {

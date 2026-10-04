@@ -16,13 +16,15 @@ public sealed partial class DebugEngine
 
     private readonly Dictionary<string, (LoadedModule Module, int Token)?> _typeCache = [];
 
-    /// <summary>Finds a loaded type by full name, preferring user code over libraries.</summary>
-    private (LoadedModule Module, int Token)? FindType(string fullName)
+    /// <summary>Finds a type loaded in an AppDomain by full name, preferring user code over libraries.</summary>
+    private (LoadedModule Module, int Token)? FindType(string fullName, int appDomainId)
     {
-        if (_typeCache.TryGetValue(fullName, out var cached))
+        string key = appDomainId + "|" + fullName;
+        if (_typeCache.TryGetValue(key, out var cached))
             return cached;
         (LoadedModule, int)? result = null;
-        foreach (LoadedModule module in _modules.Values.OrderByDescending(m => m.Metadata?.HasSymbols == true).ThenBy(m => m.Id))
+        foreach (LoadedModule module in _modules.Values.Where(m => m.Key.AppDomainId == appDomainId)
+                     .OrderByDescending(m => m.Metadata?.HasSymbols == true).ThenBy(m => m.Id))
         {
             if (module.Metadata?.FindType(fullName) is { } token)
             {
@@ -30,7 +32,7 @@ public sealed partial class DebugEngine
                 break;
             }
         }
-        return _typeCache[fullName] = result;
+        return _typeCache[key] = result;
     }
 
     /// <summary>
@@ -301,13 +303,13 @@ public sealed partial class DebugEngine
             {
                 CorDebugValue? target = self() is { } v ? ValueInspector.Unwrap(v, out _) : null;
                 ValueInspector.TypeLevel? level = target == null ? null : _values.GetTypeLevels(target).FirstOrDefault();
-                return level != null && engine._modules.TryGetValue(level.Type.Class.Module.BaseAddress.Value, out LoadedModule? owner)
+                return level != null && engine._modules.TryGetValue(level.Type.Class.Module, out LoadedModule? owner)
                     ? new TypeOperand(owner, level.Token)
                     : null;
             }
 
             CorDebugFunction function = engine.RequireILFrame(frame).Function;
-            if (!engine._modules.TryGetValue(function.Module.BaseAddress.Value, out LoadedModule? module) || module.Metadata == null)
+            if (!engine._modules.TryGetValue(function.Module, out LoadedModule? module) || module.Metadata == null)
                 return null;
             int declaring = module.Metadata.GetDeclaringType((int)function.Token.Value);
             return new TypeOperand(module, module.Metadata.GetEnclosingUserType(declaring));
@@ -341,7 +343,7 @@ public sealed partial class DebugEngine
             }
 
             foreach (string candidate in candidates)
-                if (engine.FindType(candidate) is { } found)
+                if (FindType(candidate) is { } found)
                     return new TypeOperand(found.Module, found.Token);
             return keyword == null && self == null ? ResolveTypeParameter(name) : null;
         }
@@ -392,7 +394,7 @@ public sealed partial class DebugEngine
             if (type.Type is CorElementType.Class or CorElementType.ValueType)
             {
                 CorDebugClass cls = type.Class;
-                if (!engine._modules.TryGetValue(cls.Module.BaseAddress.Value, out LoadedModule? module) || module.Metadata == null)
+                if (!engine._modules.TryGetValue(cls.Module, out LoadedModule? module) || module.Metadata == null)
                     return null;
                 List<TypeOperand?> arguments = ValueInspector.TypeArgumentsOf(type).Select(TypeOperandOf).ToList();
                 return arguments.Contains(null)
@@ -447,7 +449,7 @@ public sealed partial class DebugEngine
         }
 
         private TypeOperand? ResolveQualifiedType(string fullName) =>
-            engine.FindType(fullName) is { } found ? new TypeOperand(found.Module, found.Token) : null;
+            FindType(fullName) is { } found ? new TypeOperand(found.Module, found.Token) : null;
 
         private Operand? StaticMember(TypeOperand type, string name)
         {
@@ -575,7 +577,7 @@ public sealed partial class DebugEngine
             return null;
         }
 
-        private LoadedModule ModuleOf(MethodLevel level) => engine._modules[level.Module.BaseAddress.Value];
+        private LoadedModule ModuleOf(MethodLevel level) => engine._modules[level.Module];
 
         private Operand ConditionalAccess(ConditionalAccessExpressionSyntax node)
         {
@@ -799,7 +801,7 @@ public sealed partial class DebugEngine
                 ? [clrName, "System.Object"]
                 : [clrName, "System.ValueType", "System.Object"];
             foreach (string typeName in chain)
-                if (engine.FindType(typeName) is { } found)
+                if (FindType(typeName) is { } found)
                     result.Add(new MethodLevel(found.Module.Module, found.Module.Metadata!, found.Token, null));
             return result;
         }

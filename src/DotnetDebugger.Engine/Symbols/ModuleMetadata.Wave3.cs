@@ -63,17 +63,36 @@ internal sealed partial class ModuleMetadata
 
     // ---------------------------------------------------------------- symbols found elsewhere
 
-    /// <summary>What identifies the PDB that belongs to this module: its file name and id.</summary>
-    public (string FileName, Guid Id)? GetPdbIdentity()
+    /// <summary>
+    /// What identifies the PDB that belongs to this module: its file name, id and its key in symbol stores ("simple
+    /// symbol query protocol"): &lt;guid&gt;FFFFFFFF for a portable PDB, &lt;GUID&gt;&lt;age in hex&gt; for a Windows one.
+    /// </summary>
+    public (string FileName, Guid Id, string Key)? GetPdbIdentity()
     {
-        foreach (DebugDirectoryEntry entry in _pe.ReadDebugDirectory())
+        // a portable entry wins over a Windows one, should a module describe both
+        foreach (bool portable in new[] { true, false })
         {
-            if (entry.Type != DebugDirectoryEntryType.CodeView || !entry.IsPortableCodeView)
-                continue;
-            CodeViewDebugDirectoryData codeView = _pe.ReadCodeViewDebugDirectoryData(entry);
-            return (System.IO.Path.GetFileName(codeView.Path.Replace('\\', '/')), codeView.Guid);
+            foreach (DebugDirectoryEntry entry in _pe.ReadDebugDirectory())
+            {
+                if (entry.Type != DebugDirectoryEntryType.CodeView || entry.IsPortableCodeView != portable)
+                    continue;
+                CodeViewDebugDirectoryData codeView = _pe.ReadCodeViewDebugDirectoryData(entry);
+                string key = portable
+                    ? codeView.Guid.ToString("N") + "FFFFFFFF"
+                    : codeView.Guid.ToString("N").ToUpperInvariant() + codeView.Age.ToString("X");
+                return (System.IO.Path.GetFileName(codeView.Path.Replace('\\', '/')), codeView.Guid, key);
+            }
         }
         return null;
+    }
+
+    /// <summary>Reads a PDB located for this module (owning the stream): a portable one as is, a Windows one converted.</summary>
+    public MetadataReaderProvider? ReadPdb(Stream stream, string path, Action<string>? log)
+    {
+        if (!WindowsPdb.IsWindowsPdb(stream))
+            return MetadataReaderProvider.FromPortablePdbStream(stream);
+        using (stream)
+            return WindowsPdb.TryConvert(_pe, stream, path, log);
     }
 
     /// <summary>True when the symbols did not come from next to the module (or a directory the user named).</summary>

@@ -74,6 +74,9 @@ public sealed class LaunchArguments
     public bool Build { get; set; }
     public string? Configuration { get; set; }
 
+    /// <summary>Target framework of a project with several ("net48"). Default: the first one this machine can run.</summary>
+    public string? Framework { get; set; }
+
     /// <summary>null: default profile of the project; empty: do not use launchSettings.json.</summary>
     public string? LaunchSettingsProfile { get; set; }
     public string? LaunchSettingsFilePath { get; set; }

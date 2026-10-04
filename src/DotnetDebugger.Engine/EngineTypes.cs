@@ -28,13 +28,26 @@ public sealed class LaunchOptions
 
     /// <summary>
     /// Starts the debuggee somewhere else (e.g. in the client's terminal) instead of as a child of the debugger.
-    /// The process must be created suspended. Called without any engine lock held; may block.
+    /// The process must be created suspended, or not at all for .NET Framework (see <see cref="ExternalLaunch.Host"/>).
+    /// Called without any engine lock held; may block.
     /// </summary>
     public Func<ExternalLaunch>? ExternalLauncher { get; init; }
 }
 
 /// <param name="ExitCode">Completes with the exit code if whoever started the process gets to know it.</param>
-public sealed record ExternalLaunch(int ProcessId, Action Resume, Task<int?>? ExitCode = null);
+public sealed record ExternalLaunch(int ProcessId, Action Resume, Task<int?>? ExitCode = null)
+{
+    /// <summary>
+    /// Set when the launcher has not started the debuggee but offers its terminal instead (.NET Framework, whose
+    /// debugging library must create the process itself). <see cref="ProcessId"/> is then the process owning the terminal.
+    /// </summary>
+    public TerminalHost? Host { get; init; }
+}
+
+/// <param name="HasConsole">The host process is attached to a console (a real terminal is one).</param>
+/// <param name="StdIn">Standard handles of the host process, valid in that process.</param>
+/// <param name="Started">Tells the host the id of the debuggee it is to wait for; 0 when it could not be started.</param>
+public sealed record TerminalHost(bool HasConsole, IntPtr StdIn, IntPtr StdOut, IntPtr StdErr, Action<int> Started);
 
 public sealed record StopInfo(string Reason, int ThreadId, string? Description = null, string? Text = null, int[]? BreakpointIds = null);
 

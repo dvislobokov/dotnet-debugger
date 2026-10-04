@@ -39,12 +39,16 @@ public sealed partial class DebugEngine : IDisposable
         public required CorDebugModule Module { get; init; }
         public required string Path { get; init; }
         public ModuleMetadata? Metadata { get; init; }
+        public required ModuleKey Key { get; init; }
+
+        /// <summary>Last known friendly name of the AppDomain, set outside the default domain only.</summary>
+        public string? AppDomainName { get; set; }
     }
 
     private readonly object _lock = new();
     private readonly CorDebugManagedCallback _callback = new();
     private readonly ValueInspector _values;
-    private readonly Dictionary<ulong, LoadedModule> _modules = [];
+    private readonly ModuleTable _modules = new();
     private readonly ManualResetEventSlim _processWatcherDone = new();
     private bool _processWatcherStarted;
     private readonly List<Task> _outputPumps = [];
@@ -83,6 +87,9 @@ public sealed partial class DebugEngine : IDisposable
     public event Action<int, bool>? ThreadChanged;
     public event Action<ModuleLoadInfo>? ModuleLoaded;
 
+    /// <summary>A module went away with its AppDomain or AssemblyLoadContext.</summary>
+    public event Action<ModuleLoadInfo>? ModuleUnloaded;
+
     /// <summary>Symbols of an already loaded module became available.</summary>
     public event Action<ModuleLoadInfo>? ModuleChanged;
     public event Action<BreakpointInfo>? BreakpointChanged;
@@ -117,20 +124,39 @@ public sealed partial class DebugEngine : IDisposable
         // requests (breakpoints, configurationDone) must not pile up behind it.
         LaunchedProcess? launched = null;
         ExternalLaunch? external = null;
+        CorDebug? framework = null;
+        CorDebugProcess? hosted = null;
+        IReadOnlyDictionary<string, string?>? environment = options.Environment;
         try
         {
+            if (FrameworkRuntime.IsFrameworkProgram(options.Program))
+            {
+                // the debugging library of .NET Framework has to create the process itself, in a terminal too
+                FrameworkRuntime.VerifyBitness(options.Program);
+                framework = CreateFrameworkCorDebug();
+                environment = FrameworkEnvironment(options);
+            }
             if (options.ExternalLauncher != null)
             {
                 external = options.ExternalLauncher();
+                if (framework != null)
+                    (external, hosted) = StartInTerminal(framework, options, environment, external);
             }
             else
             {
                 launched = ProcessLauncher.Launch(_dbgShim, options.Program, options.Args,
-                    options.WorkingDirectory ?? Path.GetDirectoryName(Path.GetFullPath(options.Program)), options.Environment);
+                    options.WorkingDirectory ?? Path.GetDirectoryName(Path.GetFullPath(options.Program)), environment, framework);
             }
         }
         catch (Exception)
         {
+            try
+            {
+                framework?.Terminate();
+            }
+            catch (Exception)
+            {
+            }
             lock (_lock)
                 _launching = false;
             throw;
@@ -155,13 +181,27 @@ public sealed partial class DebugEngine : IDisposable
             }
             StartProcessWatcher();
 
-            _unregisterToken = RegisterForRuntimeStartup(_processId);
+            if ((launched?.CorDebugProcess ?? hosted) is { } process)
+            {
+                _corDebug = framework;
+                _process = process;
+                // a suspended process is not connected to its console yet: the runtime reports its start in time
+                // (a terminal's console is the terminal's business)
+                _switchConsoleOnStart = launched != null;
+            }
+            else
+            {
+                _unregisterToken = RegisterForRuntimeStartup(_processId);
+            }
             ResumeIfReady();
         }
     }
 
     private static readonly TimeSpan AttachTimeout = TimeSpan.FromSeconds(20);
     private TaskCompletionSource<Exception?>? _attachOutcome;
+
+    /// <summary>.NET Framework launch: the console is switched to UTF-8 when the runtime has started, before managed code runs.</summary>
+    private bool _switchConsoleOnStart;
 
     public void Attach(int processId, bool justMyCode = true, IReadOnlyDictionary<string, string>? sourceFileMap = null)
     {
@@ -170,6 +210,11 @@ public sealed partial class DebugEngine : IDisposable
         {
             if (_processId != 0)
                 throw new DebuggerException("A debuggee is already running.");
+            if (OperatingSystem.IsWindows() && FrameworkRuntime.IsLoadedIn(processId))
+            {
+                AttachFramework(processId, justMyCode, sourceFileMap);
+                return;
+            }
             _dbgShim ??= LoadDbgShim();
             AttachChecks.Verify(processId, _dbgShim, Log);
 
@@ -217,6 +262,44 @@ public sealed partial class DebugEngine : IDisposable
             _resumed = false;
         }
         throw new DebuggerException($"Cannot attach to process {processId}: {ErrorText.Describe(failure)}");
+    }
+
+    // .NET Framework: no runtime startup hook, the running runtime is joined directly. Called under the lock.
+    private void AttachFramework(int processId, bool justMyCode, IReadOnlyDictionary<string, string>? sourceFileMap)
+    {
+        CorDebug corDebug = CreateFrameworkCorDebug();
+        try
+        {
+            _process = corDebug.DebugActiveProcess(processId, false);
+        }
+        catch (Exception e)
+        {
+            try
+            {
+                corDebug.Terminate();
+            }
+            catch (Exception)
+            {
+            }
+            throw new DebuggerException($"Cannot attach to process {processId}: {ErrorText.Describe(e)}");
+        }
+        _corDebug = corDebug;
+        _justMyCode = justMyCode;
+        SetSourceFileMap(sourceFileMap);
+        _isAttach = true;
+        _resumed = true;
+        _processId = processId;
+        StartProcessWatcher();
+    }
+
+    private CorDebug CreateFrameworkCorDebug()
+    {
+        if (!OperatingSystem.IsWindows())
+            throw new DebuggerException(".NET Framework programs can only be debugged on Windows.");
+        CorDebug corDebug = FrameworkRuntime.CreateCorDebug();
+        corDebug.Initialize();
+        corDebug.SetManagedHandler(_callback);
+        return corDebug;
     }
 
     /// <summary>Signals that initial breakpoints are in place and the debuggee may run.</summary>
@@ -648,6 +731,14 @@ public sealed partial class DebugEngine : IDisposable
         bool evaluating = _pendingEval != null;
         switch (e)
         {
+            case CreateProcessCorDebugManagedCallbackEventArgs:
+                if (_switchConsoleOnStart)
+                {
+                    _switchConsoleOnStart = false;
+                    ConsoleCodePage.SwitchToUtf8(_processId, Log);
+                }
+                return EventAction.Continue;
+
             case CreateAppDomainCorDebugManagedCallbackEventArgs appDomain:
                 appDomain.AppDomain.Attach();
                 return EventAction.Continue;
@@ -656,10 +747,12 @@ public sealed partial class DebugEngine : IDisposable
                 OnModuleLoaded(load.Module);
                 return EventAction.Continue;
 
+            case NameChangeCorDebugManagedCallbackEventArgs nameChange when nameChange.AppDomain != null:
+                RefreshAppDomainName(nameChange.AppDomain.Id);
+                return EventAction.Continue;
+
             case UnloadModuleCorDebugManagedCallbackEventArgs unload:
-                if (_modules.Remove(unload.Module.BaseAddress.Value, out LoadedModule? removed))
-                    removed.Metadata?.Dispose();
-                _typeCache.Clear();
+                OnModuleUnloaded(unload.Module);
                 return EventAction.Continue;
 
             case CreateThreadCorDebugManagedCallbackEventArgs thread:
@@ -729,9 +822,18 @@ public sealed partial class DebugEngine : IDisposable
     {
         string path = module.Name;
         ModuleMetadata? metadata = module.IsDynamic ? null
-            : (module.IsInMemory ? null : ModuleMetadata.TryOpen(path)) ?? ReadModuleFromMemory(module, path);
-        var loaded = new LoadedModule { Id = ++_nextModuleId, Module = module, Path = path, Metadata = metadata };
-        _modules[module.BaseAddress.Value] = loaded;
+            : (module.IsInMemory ? null : ModuleMetadata.TryOpen(path, Log)) ?? ReadModuleFromMemory(module, path);
+        int appDomainId = AppDomainIdOf(module);
+        var loaded = new LoadedModule
+        {
+            Id = ++_nextModuleId,
+            Module = module,
+            Path = path,
+            Metadata = metadata,
+            Key = new ModuleKey(module.BaseAddress.Value, appDomainId),
+            AppDomainName = AppDomainNameOf(module, appDomainId),
+        };
+        _modules.Add(loaded)?.Metadata?.Dispose();
         _typeCache.Clear();
 
         // Symbols that are not next to the module: directories and the cache are always worth a look, servers only
@@ -754,8 +856,9 @@ public sealed partial class DebugEngine : IDisposable
         }
         ApplySymbols(loaded);
 
-        var info = new ModuleLoadInfo(loaded.Id, Path.GetFileName(path), path, hasSymbols);
+        ModuleLoadInfo info = DescribeModule(loaded);
         Post(() => ModuleLoaded?.Invoke(info));
+        RefreshAppDomainName(appDomainId);
     }
 
     private string? _programDirectory;
@@ -795,7 +898,7 @@ public sealed partial class DebugEngine : IDisposable
             catch (Exception)
             {
             }
-            return ModuleMetadata.TryOpenFromMemory(path, image, mapped);
+            return ModuleMetadata.TryOpenFromMemory(path, image, mapped, Log);
         }
         catch (Exception e)
         {
@@ -857,7 +960,7 @@ public sealed partial class DebugEngine : IDisposable
             });
             _typeCache.Clear();
             _threadFrames.Clear(); // frames of this module have source lines now
-            changed = new ModuleLoadInfo(loaded.Id, Path.GetFileName(loaded.Path), loaded.Path, true);
+            changed = DescribeModule(loaded);
         }
         ModuleChanged?.Invoke(changed);
         return true;
@@ -882,9 +985,7 @@ public sealed partial class DebugEngine : IDisposable
     {
         lock (_lock)
         {
-            return _modules.Values.OrderBy(m => m.Id)
-                .Select(m => new ModuleLoadInfo(m.Id, Path.GetFileName(m.Path), m.Path, m.Metadata?.HasSymbols == true))
-                .ToList();
+            return _modules.Values.OrderBy(m => m.Id).Select(m => DescribeModule(m)).ToList();
         }
     }
 
@@ -902,7 +1003,7 @@ public sealed partial class DebugEngine : IDisposable
     }
 
     private ModuleMetadata? GetMetadata(CorDebugModule module) =>
-        _modules.TryGetValue(module.BaseAddress.Value, out LoadedModule? loaded) ? loaded.Metadata : null;
+        _modules.TryGetValue(module, out LoadedModule? loaded) ? loaded.Metadata : null;
 
     // ---------------------------------------------------------------- execution control
 
@@ -1018,7 +1119,7 @@ public sealed partial class DebugEngine : IDisposable
                     string? name = null;
                     try
                     {
-                        name = _values.ReadString(_values.GetFieldByName(thread.Object, "_name"));
+                        name = _values.ReadString(_values.GetFieldByName(thread.Object, "_name", "m_Name"));
                     }
                     catch (Exception)
                     {

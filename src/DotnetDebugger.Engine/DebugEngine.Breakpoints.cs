@@ -9,7 +9,7 @@ public sealed record FunctionBreakpointRequest(string Name, string? Condition = 
 
 public sealed partial class DebugEngine
 {
-    private readonly record struct CodeLocation(ulong Module, uint Token, int Offset);
+    private readonly record struct CodeLocation(ModuleKey Module, uint Token, int Offset);
 
     /// <summary>
     /// One ICorDebug breakpoint per code location, shared by everything that wants to stop there. ICorDebug reports
@@ -198,7 +198,7 @@ public sealed partial class DebugEngine
 
     private CodeLocation AcquireNativeBreakpoint(LoadedModule module, int methodToken, int ilOffset)
     {
-        var location = new CodeLocation(module.Module.BaseAddress.Value, (uint)methodToken, ilOffset);
+        var location = new CodeLocation(module.Key, (uint)methodToken, ilOffset);
         if (!_nativeBreakpoints.TryGetValue(location, out NativeBreakpoint? native))
         {
             CorDebugFunction function = module.Module.GetFunctionFromToken(new mdMethodDef(methodToken));
@@ -251,7 +251,7 @@ public sealed partial class DebugEngine
             return EventAction.Continue;
 
         CorDebugFunction function = hit.Function;
-        var location = new CodeLocation(function.Module.BaseAddress.Value, function.Token.Value, hit.Offset);
+        var location = new CodeLocation(KeyOf(function.Module), function.Token.Value, hit.Offset);
 
         if (OnAsyncStepBreakpoint(thread, location) is { } asyncAction)
             return asyncAction;

@@ -1,0 +1,21 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <!--
+    AsyncMainApp (.NET, CoreCLR) with a Windows ("full") PDB: such PDBs are not a .NET Framework thing only
+    (FrameworkPdbTests, Windows only). Same sources, so the same "// bp:" markers apply.
+  -->
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <TargetFramework>$(DebuggerTargetFramework)</TargetFramework>
+    <AssemblyName>AsyncMainAppFull</AssemblyName>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+    <Optimize>false</Optimize>
+    <DebugType>full</DebugType>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <Compile Include="..\AsyncMainApp\*.cs" />
+  </ItemGroup>
+
+</Project>

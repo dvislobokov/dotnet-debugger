@@ -251,7 +251,7 @@ public sealed partial class DebugEngine
             if (thread.ActiveFrame is not CorDebugILFrame frame)
                 return;
             CorDebugFunction function = frame.Function;
-            if (!_modules.TryGetValue(function.Module.BaseAddress.Value, out LoadedModule? module))
+            if (!_modules.TryGetValue(function.Module, out LoadedModule? module))
                 return;
             int token = (int)function.Token.Value;
             if (module.Metadata?.GetAsyncSteppingInfo(token) is not { } info)
@@ -285,7 +285,7 @@ public sealed partial class DebugEngine
             if (GetMetadata(function.Module)?.GetAsyncSteppingInfo((int)function.Token.Value) == null)
                 return false;
 
-            if (!_modules.TryGetValue(function.Module.BaseAddress.Value, out LoadedModule? module))
+            if (!_modules.TryGetValue(function.Module, out LoadedModule? module))
                 return false;
             var step = new AsyncStep { ThreadId = thread.Id, Module = module, MethodToken = (int)function.Token.Value };
             if (!WatchAwaitingMethod(step, frame.GetArgument(0)))
@@ -311,7 +311,7 @@ public sealed partial class DebugEngine
             return false;
 
         CorDebugClass callerClass = unwrapped.ExactType.Class;
-        if (!_modules.TryGetValue(callerClass.Module.BaseAddress.Value, out LoadedModule? callerModule) || callerModule.Metadata == null)
+        if (!_modules.TryGetValue(callerClass.Module, out LoadedModule? callerModule) || callerModule.Metadata == null)
             return false;
         MethodDescription? moveNext = callerModule.Metadata.GetMethods((int)callerClass.Token.Value, "MoveNext").FirstOrDefault();
         if (moveNext == null || callerModule.Metadata.GetAsyncSteppingInfo(moveNext.Token) is not { } info)
@@ -334,10 +334,30 @@ public sealed partial class DebugEngine
     private CorDebugValue? GetAwaitingStateMachine(CorDebugValue? stateMachine)
     {
         CorDebugValue? builder = stateMachine == null ? null : _values.GetFieldByName(stateMachine, "<>t__builder");
-        CorDebugValue? task = builder == null ? null : _values.GetFieldByName(builder, "m_task");
+        // .NET Framework: the builder of a Task method wraps the generic one (m_builder.m_task)
+        CorDebugValue? task = builder == null ? null
+            : _values.GetFieldByName(builder, "m_task") ?? (_values.GetFieldByName(builder, "m_builder") is { } inner ? _values.GetFieldByName(inner, "m_task") : null);
         CorDebugValue? continuation = task == null ? null : _values.GetFieldByName(task, "m_continuationObject");
-        CorDebugValue? awaiting = continuation == null ? null : _values.GetFieldByName(continuation, "StateMachine");
+        CorDebugValue? awaiting = continuation == null ? null
+            : _values.GetFieldByName(continuation, "StateMachine") ?? GetFrameworkStateMachine(continuation);
         return awaiting != null && ValueInspector.Unwrap(awaiting, out bool isNull) != null && !isNull ? awaiting : null;
+    }
+
+    /// <summary>
+    /// .NET Framework continues an await with an Action whose target is a MoveNextRunner (m_stateMachine), possibly
+    /// wrapped in a ContinuationWrapper (m_continuation) or an AwaitTaskContinuation (m_action).
+    /// </summary>
+    private CorDebugValue? GetFrameworkStateMachine(CorDebugValue? value)
+    {
+        for (int depth = 0; depth < 4 && value != null; depth++)
+        {
+            if (_values.GetFieldByName(value, "m_stateMachine") is { } found)
+                return found;
+            value = _values.GetFieldByName(value, "_target")
+                ?? _values.GetFieldByName(value, "m_continuation")
+                ?? _values.GetFieldByName(value, "m_action");
+        }
+        return null;
     }
 
     // Not tracked with the per-stop handles: this one has to survive while the debuggee runs.

@@ -13,4 +13,15 @@
     <PackageReference Include="Microsoft.Diagnostics.DbgShim" Version="10.0.745401" />
   </ItemGroup>
 
+  <!--
+    Windows ("full"/"pdbonly") PDBs are converted to portable ones in memory (Symbols/WindowsPdb.cs). The converter reads
+    them through the native Microsoft.DiaSymReader.Native.<arch>.dll, which exists for Windows only and is loaded lazily,
+    there only. The converter comes from the dotnet-tools feed (nuget.config): its last build that targets net6.0.
+    Microsoft.DiaSymReader 2.x (rather than the 1.4 the converter asks for) knows the arm64 flavor of the native reader.
+  -->
+  <ItemGroup>
+    <PackageReference Include="Microsoft.DiaSymReader.Converter" Version="1.1.0-beta2-26328-01" />
+    <PackageReference Include="Microsoft.DiaSymReader" Version="2.0.0" />
+  </ItemGroup>
+
 </Project>

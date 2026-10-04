@@ -139,7 +139,7 @@ public sealed partial class DebugEngine
             string name = metadata.GetMethodName(moveNext.Token) + "()";
             if (location is { } l)
             {
-                _modules.TryGetValue(cls.Module.BaseAddress.Value, out LoadedModule? module);
+                _modules.TryGetValue(cls.Module, out LoadedModule? module);
                 (string path, int sourceReference) = DescribeSource(module, l.Path);
                 result.Add(new FrameInfo(id, name, path, l.Line, l.Column, l.EndLine, l.EndColumn, sourceReference));
             }
@@ -186,7 +186,7 @@ public sealed partial class DebugEngine
         _frames[id] = frameRef;
         if (location is { } l)
         {
-            _modules.TryGetValue(function.Module.BaseAddress.Value, out LoadedModule? module);
+            _modules.TryGetValue(function.Module, out LoadedModule? module);
             (string path, int sourceReference) = DescribeSource(module, l.Path);
             result.Add(new FrameInfo(id, name + "()", path, l.Line, l.Column, l.EndLine, l.EndColumn, sourceReference));
         }

@@ -19,6 +19,9 @@ internal sealed class DapClient : IDisposable
     private readonly StringBuilder _stderr = new();
     private readonly BlockingCollection<TerminalSession> _terminals = [];
 
+    /// <summary>The "terminal" the tests stand in for has a console of its own (a hidden one), as a real terminal has.</summary>
+    public bool TerminalHasConsole { get; init; }
+
     /// <param name="logFile">Where the adapter writes its trace (for tests that assert on it); the last --log wins.</param>
     public DapClient(TimeSpan? timeout = null, string? logFile = null)
     {
@@ -167,7 +170,7 @@ internal sealed class DapClient : IDisposable
         try
         {
             var arguments = request.GetArguments<RunInTerminalArguments>()!;
-            var session = new TerminalSession(arguments);
+            var session = new TerminalSession(arguments, TerminalHasConsole);
             _terminals.Add(session);
             _connection.SendResponse(request, new RunInTerminalResponseBody { ProcessId = session.Process.Id });
         }
@@ -262,6 +265,10 @@ internal sealed class DapClient : IDisposable
     public void Launch(string mode, bool stopAtEntry = false, bool justMyCode = true) =>
         Request("launch", new { program = TestPaths.TestAppDll, args = new[] { mode }, stopAtEntry, justMyCode });
 
+    /// <summary>Launches the .NET Framework debuggee (tests/TestAppFx, Windows only): "program" is the exe itself.</summary>
+    public void LaunchFx(string mode, bool stopAtEntry = false, bool justMyCode = true) =>
+        Request("launch", new { program = TestPaths.TestAppFxExe, args = new[] { mode }, stopAtEntry, justMyCode });
+
     /// <summary>Sets line breakpoints at the given markers (all markers must live in the same file).</summary>
     public Breakpoint[] SetBreakpoints(params string[] markers) =>
         SetBreakpoints(markers.Select(m => new BreakpointSpec(m)).ToArray());
@@ -301,6 +308,16 @@ internal sealed class DapClient : IDisposable
     {
         Initialize();
         Launch(mode);
+        SetBreakpoints(markers);
+        Request("configurationDone");
+        return Top(WaitForStop("breakpoint"));
+    }
+
+    /// <summary><see cref="RunTo"/> for the .NET Framework debuggee.</summary>
+    public (int ThreadId, StackFrame Top) RunToFx(string mode, params string[] markers)
+    {
+        Initialize();
+        LaunchFx(mode);
         SetBreakpoints(markers);
         Request("configurationDone");
         return Top(WaitForStop("breakpoint"));
@@ -396,7 +413,7 @@ internal sealed class TerminalSession : IDisposable
     public RunInTerminalArguments Request { get; }
     public Process Process { get; }
 
-    public TerminalSession(RunInTerminalArguments request)
+    public TerminalSession(RunInTerminalArguments request, bool hasConsole = false)
     {
         Request = request;
         var startInfo = new ProcessStartInfo(request.Args[0])
@@ -406,6 +423,7 @@ internal sealed class TerminalSession : IDisposable
             RedirectStandardError = true,
             UseShellExecute = false,
             WorkingDirectory = request.Cwd ?? "",
+            CreateNoWindow = hasConsole, // a console without a window; otherwise the one of the test run, if any
         };
         foreach (string argument in request.Args.Skip(1))
             startInfo.ArgumentList.Add(argument);
@@ -428,6 +446,15 @@ internal sealed class TerminalSession : IDisposable
     {
         lock (_output)
             _output.AppendLine(line);
+    }
+
+    public string Output
+    {
+        get
+        {
+            lock (_output)
+                return _output.ToString();
+        }
     }
 
     public void WaitForOutput(string text)
@@ -483,12 +510,21 @@ internal static class TestPaths
 
     public static string ProgramSource => Path.Combine(TestAppDirectory, "Program.cs");
 
+    /// <summary>The .NET Framework 4.8 debuggee (built on Windows only, see DotnetDebugger.Tests.csproj).</summary>
+    public const string FxTargetFramework = "net48";
+
+    public static string TestAppFxDirectory => Path.Combine(s_root, "tests", "TestAppFx");
+
+    public static string TestAppFxExe => Path.Combine(TestAppFxDirectory, "bin", s_configuration, FxTargetFramework, "TestAppFx.exe");
+
+    public static string TestAppFxProgramSource => Path.Combine(TestAppFxDirectory, "Program.cs");
+
     /// <summary>File and 1-based line of the statement tagged with "// bp:&lt;marker&gt;".</summary>
     public static (string Path, int Line) Find(string marker)
     {
         // the main debuggee first, then the small helper applications
         IEnumerable<string> files = Directory.GetFiles(TestAppDirectory, "*.cs")
-            .Concat(new[] { "SymbolLib", "SymbolApp", "EmbeddedApp", "AsyncMainApp" }.SelectMany(d => Directory.GetFiles(Path.Combine(s_root, "tests", d), "*.cs")));
+            .Concat(new[] { "SymbolLib", "SymbolApp", "EmbeddedApp", "AsyncMainApp", "TestAppFx" }.SelectMany(d => Directory.GetFiles(Path.Combine(s_root, "tests", d), "*.cs")));
         foreach (string path in files)
         {
             string[] lines = File.ReadAllLines(path);

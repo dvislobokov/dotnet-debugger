@@ -13,9 +13,17 @@ namespace DotnetDebugger.Engine.Launch;
 ///   helper -> debugger:  "&lt;token&gt; &lt;pid&gt;"
 ///   debugger -> helper:  "resume"
 ///   helper -> debugger:  "exit &lt;code&gt;"
+///
+/// A .NET Framework program is created by the debugger instead (see <see cref="FrameworkTerminalLaunch"/>); the helper
+/// lends it the terminal:
+///   helper -> debugger:  "&lt;token&gt; &lt;helper pid&gt; host &lt;has console 0|1&gt; &lt;stdin&gt; &lt;stdout&gt; &lt;stderr&gt;"
+///   debugger -> helper:  "started &lt;pid&gt;" (0: it could not be started)
+///   helper -> debugger:  "exit &lt;code&gt;"
 /// </summary>
 public static class TerminalHelper
 {
+    public const string HostKeyword = "host";
+
     public static int Run(int port, string token, string program, IReadOnlyList<string> args)
     {
         // Ctrl+C in the terminal is meant for the debuggee; this process just keeps waiting for it.
@@ -26,6 +34,9 @@ public static class TerminalHelper
         using NetworkStream stream = client.GetStream();
         using var reader = new StreamReader(stream);
         using var writer = new StreamWriter(stream) { AutoFlush = true, NewLine = "\n" };
+
+        if (OperatingSystem.IsWindows() && FrameworkRuntime.IsFrameworkProgram(program))
+            return LendTerminal(token, reader, writer);
 
         string commandLine = ProcessLauncher.BuildCommandLine(program, args);
         SuspendedProcess process = OperatingSystem.IsWindows() ? StartWindows(commandLine) : StartUnix(commandLine);
@@ -100,6 +111,50 @@ public static class TerminalHelper
             Kill = () => TerminateProcess(pi.hProcess, 1),
         };
     }
+
+    // .NET Framework: the debugger creates the debuggee with this process' console and stdio; here it is only waited for.
+    [System.Runtime.Versioning.SupportedOSPlatform("windows")]
+    private static int LendTerminal(string token, StreamReader reader, StreamWriter writer)
+    {
+        const uint SYNCHRONIZE = 0x100000, PROCESS_QUERY_LIMITED_INFORMATION = 0x1000, INFINITE = 0xFFFFFFFF;
+
+        bool hasConsole = GetConsoleProcessList(new uint[1], 1) != 0;
+        writer.WriteLine($"{token} {Environment.ProcessId} {HostKeyword} {(hasConsole ? 1 : 0)} " +
+            $"{GetStdHandle(-10).ToInt64()} {GetStdHandle(-11).ToInt64()} {GetStdHandle(-12).ToInt64()}");
+
+        string? started = reader.ReadLine();
+        if (started == null || !started.StartsWith("started ", StringComparison.Ordinal) || !int.TryParse(started.AsSpan(8), out int processId))
+            throw new IOException("The debugger went away before the debuggee was started.");
+        if (processId == 0)
+        {
+            Console.Error.WriteLine("The debugger could not start the program; see the debug console.");
+            return 1;
+        }
+
+        // the debugger holds the process (it is its debuggee), so it cannot be gone and its id reused yet
+        IntPtr process = OpenProcess(SYNCHRONIZE | PROCESS_QUERY_LIMITED_INFORMATION, false, processId);
+        if (process == IntPtr.Zero)
+            throw new IOException($"Cannot wait for the debuggee (process {processId}): error {Marshal.GetLastPInvokeError()}.");
+        WaitForSingleObject(process, INFINITE);
+        GetExitCodeProcess(process, out uint code);
+        CloseHandle(process);
+        int exitCode = unchecked((int)code);
+        try
+        {
+            writer.WriteLine($"exit {exitCode}");
+        }
+        catch (IOException)
+        {
+            // the debugger is already gone
+        }
+        return exitCode;
+    }
+
+    [DllImport("kernel32", SetLastError = true)]
+    private static extern IntPtr OpenProcess(uint access, bool inheritHandle, int processId);
+
+    [DllImport("kernel32")]
+    private static extern uint GetConsoleProcessList(uint[] processes, uint count);
 
     [StructLayout(LayoutKind.Sequential)]
     private struct STARTUPINFO

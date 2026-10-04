@@ -53,7 +53,8 @@ internal static class TerminalLauncher
             var writer = new StreamWriter(helper.GetStream()) { AutoFlush = true, NewLine = "\n" };
 
             string[] hello = (reader.ReadLine() ?? "").Split(' ');
-            if (hello.Length != 2 || hello[0] != token || !int.TryParse(hello[1], out int processId))
+            TerminalHost? host = hello.Length == 7 && hello[2] == Engine.Launch.TerminalHelper.HostKeyword ? ParseHost(hello, writer) : null;
+            if ((hello.Length != 2 && host == null) || hello[0] != token || !int.TryParse(hello[1], out int processId))
             {
                 helper.Dispose();
                 throw new DebuggerException("Unexpected connection while waiting for the debuggee to start.");
@@ -77,12 +78,30 @@ internal static class TerminalLauncher
                     helper.Dispose();
                 }
             });
-            return new ExternalLaunch(processId, () => writer.WriteLine("resume"), exitCode);
+            return new ExternalLaunch(processId, () => writer.WriteLine("resume"), exitCode) { Host = host };
         }
         finally
         {
             listener.Stop();
         }
+    }
+
+    // .NET Framework: the helper started nothing and offers its terminal; the engine creates the debuggee.
+    private static TerminalHost? ParseHost(string[] hello, StreamWriter writer)
+    {
+        if (!long.TryParse(hello[4], out long stdIn) || !long.TryParse(hello[5], out long stdOut) || !long.TryParse(hello[6], out long stdErr))
+            return null;
+        return new TerminalHost(hello[3] == "1", new IntPtr(stdIn), new IntPtr(stdOut), new IntPtr(stdErr), processId =>
+        {
+            try
+            {
+                writer.WriteLine($"started {processId}");
+            }
+            catch (Exception e) when (e is IOException or ObjectDisposedException)
+            {
+                // the terminal is gone: the debuggee runs on without it
+            }
+        });
     }
 
     // How to start this program again: "dotnet-debugger" as an executable, or "dotnet dotnet-debugger.dll".

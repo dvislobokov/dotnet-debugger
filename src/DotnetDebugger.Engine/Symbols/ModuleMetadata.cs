@@ -38,7 +38,7 @@ internal sealed partial class ModuleMetadata : IDisposable
         _pdb = pdbProvider?.GetMetadataReader();
     }
 
-    public static ModuleMetadata? TryOpen(string path)
+    public static ModuleMetadata? TryOpen(string path, Action<string>? log = null)
     {
         PEReader? pe = null;
         try
@@ -59,8 +59,9 @@ internal sealed partial class ModuleMetadata : IDisposable
             }
             catch (Exception e) when (e is IOException or BadImageFormatException or UnauthorizedAccessException)
             {
-                // Windows PDBs and unreadable files simply mean "no symbols".
+                // Unreadable files simply mean "no symbols".
             }
+            pdb ??= WindowsPdb.TryOpenAssociated(pe, path, log);
             return new ModuleMetadata(path, pe, pdb);
         }
         catch (Exception e) when (e is IOException or BadImageFormatException or UnauthorizedAccessException)
@@ -75,7 +76,7 @@ internal sealed partial class ModuleMetadata : IDisposable
     /// copied out of the debuggee; the PDB is looked for next to where the module claims to be, or embedded.
     /// </summary>
     /// <param name="isLoadedImage">Sections are laid out as the OS loader does, rather than as in the file.</param>
-    public static ModuleMetadata? TryOpenFromMemory(string nominalPath, byte[] image, bool isLoadedImage)
+    public static ModuleMetadata? TryOpenFromMemory(string nominalPath, byte[] image, bool isLoadedImage, Action<string>? log = null)
     {
         PEReader? pe = null;
         try
@@ -95,6 +96,7 @@ internal sealed partial class ModuleMetadata : IDisposable
             catch (Exception e) when (e is IOException or BadImageFormatException or UnauthorizedAccessException or ArgumentException)
             {
             }
+            pdb ??= WindowsPdb.TryOpenAssociated(pe, nominalPath, log);
             return new ModuleMetadata(nominalPath, pe, pdb);
         }
         catch (Exception e) when (e is IOException or BadImageFormatException or InvalidOperationException)

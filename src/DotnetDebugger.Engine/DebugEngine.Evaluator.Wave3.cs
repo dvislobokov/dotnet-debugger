@@ -44,7 +44,7 @@ public sealed partial class DebugEngine
             void AddNamed(string clrName)
             {
                 result.Add(new TypeSignature(clrName, []));
-                if (engine.FindType(clrName) is { } found)
+                if (FindType(clrName) is { } found)
                     result.AddRange(found.Module.Metadata!.GetInterfaceSignatures(found.Token).Select(TypeSignature.Parse));
             }
 
@@ -96,12 +96,12 @@ public sealed partial class DebugEngine
         {
             if (signature.ArrayRank > 0)
             {
-                CorDebugAppDomain appDomain = engine.RequireProcess().AppDomains.First();
+                CorDebugAppDomain appDomain = FrameAppDomain();
                 return appDomain.GetArrayOrPointerType(signature.ArrayRank == 1 ? CorElementType.SZArray : CorElementType.Array,
                     signature.ArrayRank, BuildType(signature.Arguments[0]).Raw);
             }
 
-            var found = engine.FindType(signature.Name) ?? throw new DebuggerException($"Type '{signature.Name}' is not loaded in the debuggee.");
+            var found = FindType(signature.Name) ?? throw new DebuggerException($"Type '{signature.Name}' is not loaded in the debuggee.");
             var type = new TypeOperand(found.Module, found.Token);
             ICorDebugType[] arguments = signature.Arguments.Select(a => BuildType(a).Raw).ToArray();
             CorElementType kind = type.Metadata.IsValueType(type.Token) ? CorElementType.ValueType : CorElementType.Class;
@@ -186,7 +186,7 @@ public sealed partial class DebugEngine
             extended.AddRange(arguments);
 
             // the user's own extensions win over the framework's
-            foreach (LoadedModule module in engine._modules.Values.OrderByDescending(m => m.Metadata?.HasSymbols == true).ThenBy(m => m.Id))
+            foreach (LoadedModule module in engine._modules.Values.Where(InFrameDomain).OrderByDescending(m => m.Metadata?.HasSymbols == true).ThenBy(m => m.Id))
             {
                 if (module.Metadata == null)
                     continue;

@@ -15,8 +15,9 @@ public sealed class SymbolOptions
 }
 
 /// <summary>
-/// Finds the portable PDB of a module that does not have it next to it. Symbol stores and servers use the
-/// "simple symbol query protocol" key:  &lt;pdb name&gt;/&lt;pdb guid&gt;FFFFFFFF/&lt;pdb name&gt;.
+/// Finds the PDB of a module that does not have it next to it. Symbol stores and servers use the "simple symbol query
+/// protocol" key:  &lt;pdb name&gt;/&lt;pdb guid&gt;FFFFFFFF/&lt;pdb name&gt; for portable PDBs and
+/// &lt;pdb name&gt;/&lt;PDB GUID&gt;&lt;age in hex&gt;/&lt;pdb name&gt; for Windows ones (converted, see WindowsPdb).
 /// </summary>
 internal sealed class SymbolLocator
 {
@@ -46,19 +47,19 @@ internal sealed class SymbolLocator
     {
         if (module.GetPdbIdentity() is not { } identity)
             return null;
-        string key = Path.Combine(identity.FileName, identity.Id.ToString("N") + "FFFFFFFF", identity.FileName);
+        string key = Path.Combine(identity.FileName, identity.Key, identity.FileName);
 
         foreach (string directory in _options.SearchPaths.Where(p => !IsUrl(p)))
         {
             foreach (string candidate in new[] { Path.Combine(directory, key), Path.Combine(directory, identity.FileName) })
             {
-                if (TryOpen(candidate) is { } provider)
+                if (TryOpen(candidate, module) is { } provider)
                     return (provider, false);
             }
         }
 
         string cached = Path.Combine(_cache, key);
-        if (TryOpen(cached) is { } fromCache)
+        if (TryOpen(cached, module) is { } fromCache)
             return (fromCache, true);
 
         if (!allowServers || (!includePublicServers && _notOnServers.Contains(key)))
@@ -72,7 +73,7 @@ internal sealed class SymbolLocator
 
         foreach (string server in servers)
         {
-            if (Download(server.TrimEnd('/') + "/" + key.Replace('\\', '/').ToLowerInvariant(), cached) && TryOpen(cached) is { } downloaded)
+            if (Download(server.TrimEnd('/') + "/" + key.Replace('\\', '/').ToLowerInvariant(), cached) && TryOpen(cached, module) is { } downloaded)
                 return (downloaded, true);
         }
         _notOnServers.Add(key); // do not ask again during this session
@@ -82,11 +83,11 @@ internal sealed class SymbolLocator
     private static bool IsUrl(string path) =>
         path.StartsWith("http://", StringComparison.OrdinalIgnoreCase) || path.StartsWith("https://", StringComparison.OrdinalIgnoreCase);
 
-    private MetadataReaderProvider? TryOpen(string path)
+    private MetadataReaderProvider? TryOpen(string path, ModuleMetadata module)
     {
         try
         {
-            return File.Exists(path) ? MetadataReaderProvider.FromPortablePdbStream(File.OpenRead(path)) : null;
+            return File.Exists(path) ? module.ReadPdb(File.OpenRead(path), path, _log) : null;
         }
         catch (Exception e) when (e is IOException or BadImageFormatException or UnauthorizedAccessException)
         {

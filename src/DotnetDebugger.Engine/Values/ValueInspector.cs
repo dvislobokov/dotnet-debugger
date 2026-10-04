@@ -358,13 +358,14 @@ internal sealed partial class ValueInspector
         switch (typeName)
         {
             case "System.DateTime":
-                return "{" + FormatDateTime(ReadIntegerBits(Field("_dateData")!)) + "}";
+                return "{" + FormatDateTime(ReadIntegerBits((Field("_dateData") ?? Field("dateData"))!)) + "}";
             case "System.TimeSpan":
                 return "{" + new TimeSpan((long)ReadIntegerBits(Field("_ticks")!)).ToString("c", CultureInfo.InvariantCulture) + "}";
             case "System.DateTimeOffset":
             {
-                ulong utc = ReadIntegerBits(GetFieldByName(Field("_dateTime")!, "_dateData")!);
-                var offset = TimeSpan.FromMinutes(Convert.ToInt64(ReadPrimitive(Field("_offsetMinutes")!), CultureInfo.InvariantCulture));
+                // .NET Framework: m_dateTime.dateData, m_offsetMinutes
+                ulong utc = ReadIntegerBits(GetFieldByName((Field("_dateTime") ?? Field("m_dateTime"))!, "_dateData", "dateData")!);
+                var offset = TimeSpan.FromMinutes(Convert.ToInt64(ReadPrimitive((Field("_offsetMinutes") ?? Field("m_offsetMinutes"))!), CultureInfo.InvariantCulture));
                 var local = new DateTime((long)(utc & 0x3FFFFFFFFFFFFFFF) + offset.Ticks, DateTimeKind.Unspecified);
                 string sign = offset < TimeSpan.Zero ? "-" : "+";
                 return "{" + FormatDateTime((ulong)local.Ticks) + " " + sign + offset.ToString(@"hh\:mm", CultureInfo.InvariantCulture) + "}";
@@ -916,27 +917,30 @@ internal sealed partial class ValueInspector
         }
         if (typeName.StartsWith("System.Collections.Concurrent.ConcurrentDictionary<", StringComparison.Ordinal))
         {
-            // _tables._buckets[i]._node -> _key, _value, _next
+            // _tables._buckets[i]._node -> _key, _value, _next; .NET Framework: m_tables.m_buckets[i] (the node) -> m_key, m_value, m_next
+            bool framework = Field("_tables") == null;
+            string Name(string core) => framework ? "m" + core : core;
             IEnumerable<Func<CorDebugValue?>> Nodes()
             {
-                int buckets = Field("_tables") is { } t && GetFieldByName(t, "_buckets") is { } b && Unwrap(b, out _) is { } array ? array.As<CorDebugArrayValue>().Count : 0;
+                int buckets = Field(Name("_tables")) is { } t && GetFieldByName(t, Name("_buckets")) is { } b && Unwrap(b, out _) is { } array ? array.As<CorDebugArrayValue>().Count : 0;
                 for (int i = 0; i < buckets; i++)
                 {
                     int bucket = i;
-                    Func<CorDebugValue?> node = () => GetFieldByName(ElementAt(() => GetFieldByName(Field("_tables")!, "_buckets"), bucket)!, "_node");
+                    Func<CorDebugValue?> element = () => ElementAt(() => GetFieldByName(Field(Name("_tables"))!, Name("_buckets")), bucket);
+                    Func<CorDebugValue?> node = framework ? element : () => GetFieldByName(element()!, "_node");
                     for (int guard = 0; guard < 100_000; guard++)
                     {
                         if (node() is not { } current || Unwrap(current, out bool isNull) == null || isNull)
                             break;
                         Func<CorDebugValue?> captured = node;
                         yield return captured;
-                        node = () => GetFieldByName(captured()!, "_next");
+                        node = () => GetFieldByName(captured()!, Name("_next"));
                     }
                 }
             }
             int count = Nodes().Count();
             return new CollectionView(count, () => Nodes().Select(n =>
-                new CollectionItem("[" + Key(() => GetFieldByName(n()!, "_key")) + "]", () => GetFieldByName(n()!, "_value"))));
+                new CollectionItem("[" + Key(() => GetFieldByName(n()!, Name("_key"))) + "]", () => GetFieldByName(n()!, Name("_value")))));
         }
         if (typeName.StartsWith(Generic + "SortedList<", StringComparison.Ordinal))
         {
@@ -948,15 +952,22 @@ internal sealed partial class ValueInspector
         bool dictionary = typeName.StartsWith(Generic + "Dictionary<", StringComparison.Ordinal);
         if (dictionary || typeName.StartsWith(Generic + "HashSet<", StringComparison.Ordinal))
         {
-            // _entries[0.._count) where next >= -1 are live; freed entries chain through more negative values
-            int used = Int("_count"), live = used - Int("_freeCount");
-            string next = dictionary ? "next" : "Next";
+            // _entries[0.._count) where next >= -1 are live; freed entries chain through more negative values.
+            // .NET Framework: entries[0..count) (HashSet: m_slots[0..m_lastIndex)) where hashCode >= 0 are live.
+            bool framework = Field("_entries") == null;
+            string entries = !framework ? "_entries" : dictionary ? "entries" : "m_slots";
+            int used = !framework ? Int("_count") : dictionary ? Int("count") : Int("m_lastIndex");
+            int live = !framework ? used - Int("_freeCount") : dictionary ? used - Int("freeCount") : Int("m_count");
+            string value = dictionary || framework ? "value" : "Value";
+            bool IsLive(CorDebugValue e) => framework
+                ? Convert.ToInt32(ReadPrimitive(GetFieldByName(e, "hashCode")!), CultureInfo.InvariantCulture) >= 0
+                : Convert.ToInt32(ReadPrimitive(GetFieldByName(e, dictionary ? "next" : "Next")!), CultureInfo.InvariantCulture) >= -1;
             CollectionItem Item(int position, int index)
             {
-                Func<CorDebugValue?> entry = () => ElementAt(() => Field("_entries"), position);
+                Func<CorDebugValue?> entry = () => ElementAt(() => Field(entries), position);
                 return dictionary
-                    ? new CollectionItem("[" + Key(() => GetFieldByName(entry()!, "key")) + "]", () => GetFieldByName(entry()!, "value"))
-                    : Indexed(index, () => GetFieldByName(entry()!, "Value"), false);
+                    ? new CollectionItem("[" + Key(() => GetFieldByName(entry()!, "key")) + "]", () => GetFieldByName(entry()!, value))
+                    : Indexed(index, () => GetFieldByName(entry()!, value), false);
             }
             IEnumerable<CollectionItem> Items()
             {
@@ -964,7 +975,7 @@ internal sealed partial class ValueInspector
                 for (int i = 0; i < used; i++)
                 {
                     _host.ThrowIfCancelled();
-                    if (ElementAt(() => Field("_entries"), i) is not { } e || Convert.ToInt32(ReadPrimitive(GetFieldByName(e, next)!), CultureInfo.InvariantCulture) < -1)
+                    if (ElementAt(() => Field(entries), i) is not { } e || !IsLive(e))
                         continue;
                     yield return Item(i, index++);
                 }
@@ -1024,6 +1035,15 @@ internal sealed partial class ValueInspector
     {
         foreach ((string fieldName, CorDebugValue? fieldValue) in EnumerateFields(value))
             if (fieldName == name)
+                return fieldValue;
+        return null;
+    }
+
+    /// <summary>A field that is called differently in .NET (Core) and in .NET Framework.</summary>
+    public CorDebugValue? GetFieldByName(CorDebugValue value, string name, string frameworkName)
+    {
+        foreach ((string fieldName, CorDebugValue? fieldValue) in EnumerateFields(value))
+            if (fieldName == name || fieldName == frameworkName)
                 return fieldValue;
         return null;
     }
@@ -1209,9 +1229,22 @@ internal sealed partial class ValueInspector
     {
         try
         {
-            int flags = (int)ReadIntegerBits(GetField(obj, type, "_flags")!);
-            uint hi = (uint)ReadIntegerBits(GetField(obj, type, "_hi32")!);
-            ulong lo64 = ReadIntegerBits(GetField(obj, type, "_lo64")!);
+            int flags;
+            uint hi;
+            ulong lo64;
+            if (GetField(obj, type, "_flags") is { } coreFlags)
+            {
+                flags = (int)ReadIntegerBits(coreFlags);
+                hi = (uint)ReadIntegerBits(GetField(obj, type, "_hi32")!);
+                lo64 = ReadIntegerBits(GetField(obj, type, "_lo64")!);
+            }
+            else
+            {
+                // .NET Framework: flags, hi, lo, mid
+                flags = (int)ReadIntegerBits(GetField(obj, type, "flags")!);
+                hi = (uint)ReadIntegerBits(GetField(obj, type, "hi")!);
+                lo64 = (uint)ReadIntegerBits(GetField(obj, type, "lo")!) | (ulong)(uint)ReadIntegerBits(GetField(obj, type, "mid")!) << 32;
+            }
             return new decimal((int)(uint)lo64, (int)(uint)(lo64 >> 32), (int)hi, flags < 0, (byte)(flags >> 16));
         }
         catch (Exception)

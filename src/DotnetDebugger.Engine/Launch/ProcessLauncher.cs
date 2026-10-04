@@ -13,6 +13,9 @@ internal sealed class LaunchedProcess
     public required Stream StdErr { get; init; }
     public required Stream StdIn { get; init; }
 
+    /// <summary>Set for .NET Framework: the process was created by the debugging library itself.</summary>
+    public CorDebugProcess? CorDebugProcess { get; init; }
+
     /// <summary>Set when the process is not a child of this one and its launcher reports the exit code (Unix).</summary>
     public Task<int?>? ExitCode { get; init; }
 
@@ -26,8 +29,12 @@ internal sealed class LaunchedProcess
 /// </summary>
 internal static class ProcessLauncher
 {
+    /// <param name="framework">
+    /// The ICorDebug of .NET Framework, which has no way to join a process later (dbgshim's runtime startup hook):
+    /// it creates the process itself.
+    /// </param>
     public static LaunchedProcess Launch(DbgShim dbgShim, string program, IReadOnlyList<string> args, string? cwd,
-        IReadOnlyDictionary<string, string?>? env)
+        IReadOnlyDictionary<string, string?>? env, CorDebug? framework = null)
     {
         List<string> argv = BuildArguments(program, args);
 
@@ -40,14 +47,27 @@ internal static class ProcessLauncher
             IntPtr hOut = stdout.ClientSafePipeHandle.DangerousGetHandle();
             IntPtr hErr = stderr.ClientSafePipeHandle.DangerousGetHandle();
 
-            (int pid, Action resume, Task<int?>? exitCode, Action? abandon) = OperatingSystem.IsWindows()
-                ? LaunchWindows(string.Join(' ', argv.Select(QuoteArgument)), cwd, env, hIn, hOut, hErr)
-                : LaunchUnix(dbgShim, argv, cwd, env, (int)hIn, (int)hOut, (int)hErr);
+            CorDebugProcess? process = null;
+            (int pid, Action resume, Task<int?>? exitCode, Action? abandon) = framework != null
+                ? LaunchFramework(framework, string.Join(' ', argv.Select(QuoteArgument)), cwd, env, hIn, hOut, hErr, out process)
+                : OperatingSystem.IsWindows()
+                    ? LaunchWindows(string.Join(' ', argv.Select(QuoteArgument)), cwd, env, hIn, hOut, hErr)
+                    : LaunchUnix(dbgShim, argv, cwd, env, (int)hIn, (int)hOut, (int)hErr);
 
             stdin.DisposeLocalCopyOfClientHandle();
             stdout.DisposeLocalCopyOfClientHandle();
             stderr.DisposeLocalCopyOfClientHandle();
-            return new LaunchedProcess { ProcessId = pid, Resume = resume, StdOut = stdout, StdErr = stderr, StdIn = stdin, ExitCode = exitCode, Abandon = abandon };
+            return new LaunchedProcess
+            {
+                ProcessId = pid,
+                Resume = resume,
+                StdOut = stdout,
+                StdErr = stderr,
+                StdIn = stdin,
+                ExitCode = exitCode,
+                Abandon = abandon,
+                CorDebugProcess = process,
+            };
         }
         catch
         {
@@ -79,6 +99,9 @@ internal static class ProcessLauncher
         string? current = Environment.ProcessPath;
         if (current != null && Path.GetFileName(current).Equals(exe, StringComparison.OrdinalIgnoreCase))
             return current;
+        // the 32-bit adapter debugs dlls that only run as x86, which only an x86 host can run
+        if (!Environment.Is64BitProcess && ProcessBitness.FindX86DotnetHost() is { } x86Host)
+            return x86Host;
 
         var dirs = new List<string?> { Environment.GetEnvironmentVariable("DOTNET_ROOT") };
         dirs.AddRange((Environment.GetEnvironmentVariable("PATH") ?? "").Split(Path.PathSeparator));
@@ -119,7 +142,7 @@ internal static class ProcessLauncher
         return sb.ToString();
     }
 
-    private static List<string> BuildEnvironment(IReadOnlyDictionary<string, string?>? overrides)
+    internal static List<string> BuildEnvironment(IReadOnlyDictionary<string, string?>? overrides)
     {
         var comparer = OperatingSystem.IsWindows() ? StringComparer.OrdinalIgnoreCase : StringComparer.Ordinal;
         var env = new SortedDictionary<string, string>(comparer);
@@ -176,6 +199,47 @@ internal static class ProcessLauncher
                 ResumeThread(pi.hThread);
                 CloseHandle(pi.hThread);
             }, null, null);
+        }
+        finally
+        {
+            Marshal.FreeHGlobal(envPtr);
+        }
+    }
+
+    // The same suspended start with redirected stdio, done by ICorDebug: the debugger is there before the runtime.
+    private static (int, Action, Task<int?>?, Action?) LaunchFramework(CorDebug corDebug, string commandLine, string? cwd,
+        IReadOnlyDictionary<string, string?>? env, IntPtr hIn, IntPtr hOut, IntPtr hErr, out CorDebugProcess process)
+    {
+        var security = new SECURITY_ATTRIBUTES { nLength = Marshal.SizeOf<SECURITY_ATTRIBUTES>() };
+        var si = new STARTUPINFOW
+        {
+            cb = Marshal.SizeOf<STARTUPINFOW>(),
+            dwFlags = STARTF.STARTF_USESTDHANDLES,
+            hStdInput = hIn,
+            hStdOutput = hOut,
+            hStdError = hErr,
+        };
+
+        string envBlock = string.Concat(BuildEnvironment(env).Select(e => e + "\0")) + "\0";
+        IntPtr envPtr = Marshal.StringToHGlobalUni(envBlock);
+        try
+        {
+            var pi = default(ClrDebug.PROCESS_INFORMATION);
+            process = corDebug.CreateProcess(null!, commandLine, security, security, true,
+                CreateProcessFlags.CREATE_SUSPENDED | CreateProcessFlags.CREATE_UNICODE_ENVIRONMENT | CreateProcessFlags.CREATE_NO_WINDOW,
+                envPtr, string.IsNullOrEmpty(cwd) ? null! : cwd, si, ref pi, CorDebugCreateProcessFlags.DEBUG_NO_SPECIAL_OPTIONS);
+
+            CloseHandle(pi.hProcess);
+            IntPtr thread = pi.hThread;
+            return (pi.dwProcessId, () =>
+            {
+                ResumeThread(thread);
+                CloseHandle(thread);
+            }, null, null);
+        }
+        catch (DebugException e)
+        {
+            throw new DebuggerException($"Failed to start '{commandLine}': {ErrorText.Describe(e)}");
         }
         finally
         {

@@ -2,7 +2,7 @@
   "name": "dotnet-debugger",
   "displayName": ".NET Debugger (dotnet-debugger)",
   "description": "Debug .NET applications with the open source dotnet-debugger DAP adapter.",
-  "version": "0.1.1",
+  "version": "0.2.0",
   "publisher": "dvislobokov",
   "license": "MIT",
   "icon": "icon.png",
@@ -184,6 +184,10 @@
                 "type": "string",
                 "description": "Build configuration used to build and to locate the output of \"project\".",
                 "default": "Debug"
+              },
+              "framework": {
+                "type": "string",
+                "description": "Target framework to build and run when \"project\" has several (e.g. \"net48\"). Defaults to the first one that can run on this machine."
               },
               "args": {
                 "type": "array",

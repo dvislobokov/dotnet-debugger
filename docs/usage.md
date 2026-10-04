@@ -72,6 +72,7 @@ dotnet-debugger --version
 | `program` | Путь к `.dll` (запускается через `dotnet`) или к исполняемому файлу приложения |
 | `project` | Файл проекта или каталог. Выходная сборка определяется через MSBuild, применяется `Properties/launchSettings.json` |
 | `build`, `configuration` | Выполнить `dotnet build` перед запуском; конфигурация сборки (по умолчанию `Debug`) |
+| `framework` | Целевой фреймворк проекта с несколькими (`TargetFrameworks`), например `"net48"`. Не задан — первый из списка, который может работать на этой машине (адаптер пишет, какой выбран) |
 | `args`, `cwd`, `env` | Аргументы, рабочий каталог, переменные окружения (`null` удаляет переменную). Имеют приоритет над профилем запуска |
 | `launchSettingsProfile` | Имя профиля. Не задано — первый с `"commandName": "Project"`; `""` — не использовать `launchSettings.json` |
 | `console` | `internalConsole` (по умолчанию), `integratedTerminal`, `externalTerminal` |
@@ -88,6 +89,23 @@ dotnet-debugger --version
 ```jsonc
 { "name": ".NET: Attach", "type": "dotnet-debugger", "request": "attach", "processId": "${command:pickProcess}" }
 ```
+
+### Запуск программ .NET Framework 4.x (Windows)
+
+- **Проекты старого формата** (без `Sdk="..."`, с `ToolsVersion`, `packages.config`) собираются `MSBuild.exe` из
+  Visual Studio или Build Tools (находится через `vswhere`, путь можно задать переменной `MSBUILD_EXE_PATH`), с
+  восстановлением пакетов (`-restore -p:RestorePackagesConfig=true`). Для определения выходной сборки нужен MSBuild 17.8+
+  (VS 2022 17.8); со старым — укажите `program`. Без Visual Studio адаптер пробует `dotnet build`: так собираются
+  только проекты, которым ничего не нужно от Visual Studio. SDK-проекты `net48` собираются `dotnet build`, как обычно.
+- **Терминал** (`integratedTerminal`/`externalTerminal`): библиотека отладки .NET Framework умеет подключаться к
+  процессу до старта управляемого кода, только если сама его создаёт. Поэтому программу запускает отладчик — с
+  консолью и stdin/stdout терминала (вспомогательный процесс в терминале лишь «одалживает» их и ждёт завершения).
+  Брейкпоинты с первой строки `Main` и `stopAtEntry` работают так же, как в Debug Console; Ctrl+C, `Console.ReadKey`
+  — терминала. Отличие: окружение программы — окружение отладчика плюс `env`, а не окружение терминала.
+- **NGen**: при `"justMyCode": false` адаптер задаёт `COMPlus_ZapDisable=1` — предкомпилированные (оптимизированные)
+  NGen-образы фреймворка не используются, его код JIT-компилируется, и шаги в него (при наличии символов) и его
+  локальные переменные работают лучше; старт медленнее. Заданное вами значение
+  (`"env": { "COMPlus_ZapDisable": "0" }`) не переопределяется.
 
 ## Neovim (nvim-dap)
 
