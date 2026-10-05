@@ -3,7 +3,7 @@
 All notable changes to this project are documented here. Versions follow [SemVer](https://semver.org); the adapter,
 the .NET tool and the VS Code extension share one version number.
 
-## 0.2.0 — unreleased
+## 0.2.0 — 2026-10-05
 
 .NET Framework 4.x on Windows (regression tests: `FrameworkTests`, `FrameworkLaunchTests`, `FrameworkDomainsTests`,
 `FrameworkPdbTests`).

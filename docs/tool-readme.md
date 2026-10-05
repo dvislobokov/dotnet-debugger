@@ -3,6 +3,9 @@
 A debugger for .NET (CoreCLR) that speaks the [Debug Adapter Protocol](https://microsoft.github.io/debug-adapter-protocol/).
 MIT licensed, written in C# on top of ICorDebug.
 
+Debugs .NET 8, 9 and 10 applications on Windows, Linux and macOS, and .NET Framework 4.x applications on Windows
+(including old non-SDK projects and their Windows PDBs). 64-bit processes only.
+
 ```
 dotnet tool install -g dotnet-debugger-dap
 dotnet-debugger --version

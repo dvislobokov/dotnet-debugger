@@ -29,6 +29,13 @@
     <Description>A .NET debugger speaking the Debug Adapter Protocol (DAP): use it from VS Code, Neovim (nvim-dap), Emacs, Helix and any other DAP client. Breakpoints, stepping (async aware), expression evaluation, symbol servers, single-file and ReadyToRun applications.</Description>
     <PackageTags>debugger;dap;debug-adapter-protocol;dotnet;coreclr;icordebug;vscode;neovim</PackageTags>
     <PackageReadmeFile>README.md</PackageReadmeFile>
+    <PackageReleaseNotes>0.2.0
+- .NET Framework 4.x on Windows: launch and attach, legacy (non-SDK) projects built with MSBuild.exe, integratedTerminal/externalTerminal, several AppDomains, Windows (full/pdbonly) PDBs, NGen disabled with justMyCode=false.
+- 32-bit processes are refused with a plain message (64-bit only).
+- Linux/macOS, .NET 8: the adapter no longer hangs after "The debuggee cannot be stopped" while expanding an object.
+- Fixes from a black-box DAP probe of 0.1.0: unhandled exceptions always stop, non-ASCII output on Windows, async stepping, long strings, attach errors, paged and capped variables, implicit evaluation timeouts (option allowImplicitFuncEval), robust DAP parsing, expression evaluator additions.
+- JetBrains DAP client compatibility: variables filter "named", namedVariables, sorted threads, single terminate, exited -1 for a terminated debuggee.
+Full list: https://github.com/dvislobokov/dotnet-debugger/blob/master/CHANGELOG.md</PackageReleaseNotes>
     <PackageOutputPath>$(MSBuildThisFileDirectory)..\..\artifacts\packages</PackageOutputPath>
   </PropertyGroup>
 
