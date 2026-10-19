@@ -84,6 +84,10 @@ public class Wave2Tests
     [InlineData("new Pair().A", "0")]
     [InlineData("new Pair { A = 5 }.A", "5")]
     [InlineData("new int[3].Length", "3")]
+    // arrays of structs: the runtime's "new array" evaluation refuses value types, GC.AllocateArray<T> does not
+    [InlineData("new System.DateTime[2].Length", "2")]
+    [InlineData("new System.Collections.Generic.KeyValuePair<string, int>[1].Length", "1")]
+    [InlineData("new[] { new Pair { A = 7 } }[0].A", "7")]
     [InlineData("new[] { 4, 5, 6 }[1]", "5")]
     [InlineData("new System.Text.StringBuilder(\"ab\").Append(\"c\").ToString()", "\"abc\"")]
     [InlineData("new string('x', 3)", "\"xxx\"")]

@@ -398,12 +398,23 @@ public sealed partial class DebugEngine
             return NewArray(elementType, elements, elements.Count);
         }
 
-        private Operand NewArray(TypeOperand elementType, List<Operand>? elements, int length)
+        private Operand NewArray(TypeOperand elementType, List<Operand>? elements, int length) =>
+            NewArray(ToCorDebugType(elementType), elements, length);
+
+        private Operand ArrayOf(CorDebugType elementType, List<Operand> elements) => NewArray(elementType, elements, elements.Count);
+
+        private Operand NewArray(CorDebugType elementType, List<Operand>? elements, int length)
         {
             if (!allowCalls)
                 throw new DebuggerException(SideEffectsNotAllowed);
-            ICorDebugType rawElementType = ToCorDebugType(elementType).Raw;
-            CorDebugValue? created = engine.RunEval(frame.ThreadId, eval => eval.NewParameterizedArray(rawElementType, 1, [length], [0]));
+            ICorDebugType rawElementType = elementType.Raw;
+            // The runtime's "new array" evaluation takes primitives, classes, strings and object only: an array of
+            // structs (DateTime, KeyValuePair<,>, a user struct) is refused with ArgumentOutOfRangeException. The
+            // debuggee allocates those itself through GC.AllocateArray<T> (.NET 5 and later; older runtimes keep the
+            // refusal).
+            CorDebugValue? created = elementType.Type == CorElementType.ValueType && AllocateArrayMethod() is { } allocate
+                ? ((IEvalHost)engine).CallFunction(frame.ThreadId, allocate, [elementType], [CreatePrimitive(length), CreatePrimitive(false)])
+                : engine.RunEval(frame.ThreadId, eval => eval.NewParameterizedArray(rawElementType, 1, [length], [0]));
             var array = new RemoteOperand(engine.Stabilize(() => created));
 
             for (int i = 0; i < (elements?.Count ?? 0); i++)
@@ -412,6 +423,16 @@ public sealed partial class DebugEngine
                 AssignCore(() => ValueInspector.Unwrap(array.Getter()!, out _)!.As<CorDebugArrayValue>().GetElementAtPosition(index), elements![i]);
             }
             return array;
+        }
+
+        /// <summary>System.GC.AllocateArray&lt;T&gt;(int length, bool pinned), where the runtime has it.</summary>
+        private CorDebugFunction? AllocateArrayMethod()
+        {
+            if (FindType("System.GC") is not { } gc)
+                return null;
+            MethodDescription? method = gc.Module.Metadata!.GetMethods(gc.Token, "AllocateArray")
+                .FirstOrDefault(m => m.IsStatic && m.GenericParameterCount == 1 && m.ParameterTypes is ["System.Int32", "System.Boolean"]);
+            return method == null ? null : gc.Module.Module.GetFunctionFromToken(new mdMethodDef(method.Token));
         }
     }
 }

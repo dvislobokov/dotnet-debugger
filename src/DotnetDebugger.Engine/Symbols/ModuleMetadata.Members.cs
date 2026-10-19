@@ -159,28 +159,77 @@ internal sealed partial class ModuleMetadata
         _md.GetMethodDefinition((MethodDefinitionHandle)MetadataTokens.Handle(methodToken)).GetGenericParameters()
             .Select(h => _md.GetString(_md.GetGenericParameter(h).Name)).ToArray();
 
-    /// <summary>User methods named <paramref name="name"/>: "Method", "Type.Method" or "Namespace.Type.Method".</summary>
+    private Dictionary<string, List<MethodDefinitionHandle>>? _methodsBySimpleName;
+
+    // Every method of the module by its plain name, built once: a function breakpoint is looked up in every module,
+    // the framework's included, and those have a hundred thousand methods.
+    private Dictionary<string, List<MethodDefinitionHandle>> MethodsBySimpleName
+    {
+        get
+        {
+            lock (_sync)
+            {
+                if (_methodsBySimpleName != null)
+                    return _methodsBySimpleName;
+                var index = new Dictionary<string, List<MethodDefinitionHandle>>(StringComparer.Ordinal);
+                foreach (MethodDefinitionHandle handle in _md.MethodDefinitions)
+                {
+                    string name = _md.GetString(_md.GetMethodDefinition(handle).Name);
+                    if (!index.TryGetValue(name, out List<MethodDefinitionHandle>? list))
+                        index[name] = list = [];
+                    list.Add(handle);
+                }
+                return _methodsBySimpleName = index;
+            }
+        }
+    }
+
+    /// <summary>
+    /// Methods named <paramref name="name"/>: "Method", "Type.Method", "Namespace.Type.Method"; nested types with "."
+    /// (or "+"), generic types with or without their arguments ("Box&lt;string&gt;.Describe", "Box.Describe"), generic
+    /// methods with or without theirs. All overloads match. Symbols are not needed: without them a method is entered
+    /// at its first instruction, with them at its first line.
+    /// </summary>
     public List<(int MethodToken, int ILOffset)> FindMethodsByName(string name)
     {
         var result = new List<(int, int)>();
-        if (_pdb == null)
+        name = StripGenericArguments(name).Replace('+', '.').Replace(" ", "");
+        if (name.Length == 0)
             return result;
         string simpleName = name[(name.LastIndexOf('.') + 1)..];
-        foreach (MethodDefinitionHandle handle in _md.MethodDefinitions)
+        if (!MethodsBySimpleName.TryGetValue(simpleName, out List<MethodDefinitionHandle>? candidates))
+            return result;
+
+        foreach (MethodDefinitionHandle handle in candidates)
         {
             MethodDefinition method = _md.GetMethodDefinition(handle);
-            if (_md.GetString(method.Name) != simpleName)
-                continue;
+            if (method.RelativeVirtualAddress == 0)
+                continue; // abstract, extern: nothing to stop in
             int token = MetadataTokens.GetToken(handle);
-            string fullName = GetTypeName(method.GetDeclaringType()) + "." + simpleName;
+            string fullName = StripArity(GetTypeName(method.GetDeclaringType())) + "." + simpleName;
             if (fullName != name && !fullName.EndsWith("." + name, StringComparison.Ordinal))
                 continue;
             var points = GetSequencePoints(token);
-            if (points == null)
-                continue;
-            result.Add((token, points.FirstOrDefault(p => !p.IsHidden).Offset));
+            result.Add((token, points?.FirstOrDefault(p => !p.IsHidden).Offset ?? 0));
         }
         return result;
+    }
+
+    // "Box<string>.Describe<int>" -> "Box.Describe"
+    private static string StripGenericArguments(string name)
+    {
+        var sb = new System.Text.StringBuilder(name.Length);
+        int depth = 0;
+        foreach (char c in name)
+        {
+            if (c == '<')
+                depth++;
+            else if (c == '>')
+                depth = Math.Max(0, depth - 1);
+            else if (depth == 0)
+                sb.Append(c);
+        }
+        return sb.ToString();
     }
 
     public AsyncSteppingInfo? GetAsyncSteppingInfo(int methodToken)

@@ -125,15 +125,19 @@ dap.configurations.cs = {
   `list.First()`), создание объектов и массивов, присваивания
 - спецификаторы формата: `x,h` — hex, `s,nq` — без кавычек, `obj,raw` — без визуализаторов
 - псевдопеременные: `$exception`, `$ReturnValue`
-- **не поддерживаются** лямбды (`Where(x => ...)`), паттерны, `await`
+- лямбды в LINQ-методах: `people.Where(p => p.Age > 30).Count()`, `numbers.Select(x => x * factor).Sum()`,
+  `items.OrderBy(i => i.Name).First()` (`Where`, `Select`, `Any`, `All`, `Count`, `First`/`Last`/`Single`, `Sum`, `Min`,
+  `Max`, `Average`, `OrderBy`, `TakeWhile`, `SkipWhile`; тело — выражение или один `return`)
+- **не поддерживаются** лямбды вне этих методов (`GroupBy`, `Aggregate`, свои методы), паттерны, `await`
 
 При наведении мыши методы не вызываются и ничего не присваивается.
 
 ## Брейкпоинты
 
 Условия (`i == 7 && total > 0`), счётчик срабатываний (`5`, `>=5`, `%5`), logpoints (`i={i} сумма={total + 1}`),
-брейкпоинты на функцию (`Method`, `Type.Method`, `Namespace.Type.Method`), inline-брейкпоинт внутри однострочной лямбды
-(Shift+F9). Фильтры исключений принимают условия по типам: `System.IO.*`, `!System.OperationCanceledException`.
+брейкпоинты на функцию (`Method`, `Type.Method`, `Namespace.Type.Method`, `Outer.Inner.Method`, `Describe<int>`; в
+библиотеке без символов — при `justMyCode: false`), inline-брейкпоинт внутри однострочной лямбды (Shift+F9).
+«Step Into Target» (контекстное меню строки) перечисляет вызовы строки и заходит ровно в выбранный. Фильтры исключений принимают условия по типам: `System.IO.*`, `!System.OperationCanceledException`.
 
 ## Если что-то не работает
 

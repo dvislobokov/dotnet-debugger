@@ -43,6 +43,12 @@ public sealed partial class DebugEngine : IDisposable
 
         /// <summary>Last known friendly name of the AppDomain, set outside the default domain only.</summary>
         public string? AppDomainName { get; set; }
+
+        /// <summary>The JIT does not optimize this module's code: the debugger told it so, or the assembly asks for it (a Debug build).</summary>
+        public bool OptimizationsDisabled { get; set; }
+
+        /// <summary>"My code" for Just My Code, as told to the runtime: it has symbols, and they are not borrowed from a symbol server.</summary>
+        public bool IsUserCode { get; set; }
     }
 
     private readonly object _lock = new();
@@ -186,9 +192,10 @@ public sealed partial class DebugEngine : IDisposable
             {
                 _corDebug = framework;
                 _process = process;
-                // a suspended process is not connected to its console yet: the runtime reports its start in time
-                // (a terminal's console is the terminal's business)
-                _switchConsoleOnStart = launched != null;
+                // a suspended process is not connected to its console yet: the runtime reports its start in time.
+                // The console of a program started in the client's terminal is the terminal's own; it is switched all
+                // the same: the program has not run yet, and the debugger is the one party that knows the moment.
+                _switchConsoleOnStart = true;
             }
             else
             {
@@ -201,7 +208,7 @@ public sealed partial class DebugEngine : IDisposable
     private static readonly TimeSpan AttachTimeout = TimeSpan.FromSeconds(20);
     private TaskCompletionSource<Exception?>? _attachOutcome;
 
-    /// <summary>.NET Framework launch: the console is switched to UTF-8 when the runtime has started, before managed code runs.</summary>
+    /// <summary>.NET Framework launch: the console is switched to UTF-8 when the process exists, before managed code runs.</summary>
     private bool _switchConsoleOnStart;
 
     public void Attach(int processId, bool justMyCode = true, IReadOnlyDictionary<string, string>? sourceFileMap = null)
@@ -372,8 +379,10 @@ public sealed partial class DebugEngine : IDisposable
         {
             if (corDebug == null || hr != HRESULT.S_OK)
                 throw new DebuggerException($"The .NET runtime could not be debugged: {ErrorText.Explain(hr.ToString())}.");
-            // the debuggee waits for this callback to return: its console exists, managed code has not run yet
-            if (_launched != null)
+            // The debuggee waits for this callback to return: its console exists, managed code has not run yet. That
+            // holds for a program started in the client's terminal too (runInTerminal): its console is the terminal's,
+            // and switching it is the only way its output that is not ASCII survives the trip through the pipe.
+            if (!_isAttach)
                 ConsoleCodePage.SwitchToUtf8(_processId, Log);
             lock (_lock)
             {
@@ -841,15 +850,17 @@ public sealed partial class DebugEngine : IDisposable
         // Symbols that are not next to the module: directories and the cache are always worth a look, servers only
         // when the user wants to see code that is not theirs.
         if (metadata is { HasSymbols: false } && _symbolLocator?.Find(metadata, allowServers: !_justMyCode) is { } found)
-            metadata.AttachSymbols(found.Provider, found.Foreign);
+            metadata.AttachSymbols(found.Provider, found.Foreign, found.Path);
 
         bool hasSymbols = metadata?.HasSymbols == true;
+        loaded.OptimizationsDisabled = metadata?.OptimizationsDisabledByAttribute == true;
         if (hasSymbols)
         {
             // Only possible before any code of the module has been jitted, i.e. not on attach.
             try
             {
                 module.JITCompilerFlags = CorDebugJITCompilerFlags.CORDEBUG_JIT_DISABLE_OPTIMIZATION;
+                loaded.OptimizationsDisabled = true;
             }
             catch (Exception e)
             {
@@ -916,6 +927,7 @@ public sealed partial class DebugEngine : IDisposable
         bool hasSymbols = metadata?.HasSymbols == true;
         // symbols fetched from a server or cache describe somebody else's code
         bool userCode = hasSymbols && !metadata!.SymbolsAreForeign;
+        loaded.IsUserCode = userCode;
         try
         {
             loaded.Module.SetJMCStatus(userCode, 0, null!);
@@ -926,7 +938,12 @@ public sealed partial class DebugEngine : IDisposable
         }
 
         if (!hasSymbols)
+        {
+            // function breakpoints may name a method of a module without symbols (or learn that they must not stop there)
+            if (metadata != null)
+                BindBreakpoints(loaded);
             return;
+        }
         if (userCode)
             MarkNonUserCode(loaded.Module, metadata!);
         BindBreakpoints(loaded);
@@ -950,7 +967,7 @@ public sealed partial class DebugEngine : IDisposable
             _symbolLocator ??= new SymbolLocator(new SymbolOptions(), Log);
             if (_symbolLocator.Find(loaded.Metadata, allowServers: true, includePublicServers: true) is not { } found
                 // a module the user asks symbols for is one they want to debug: it counts as their code from now on
-                || !loaded.Metadata.AttachSymbols(found.Provider, foreign: false))
+                || !loaded.Metadata.AttachSymbols(found.Provider, foreign: false, found.Path))
             {
                 return false;
             }
@@ -1042,6 +1059,7 @@ public sealed partial class DebugEngine : IDisposable
         _variableHandles.Clear();
         _logicalFrames.Clear();
         _exceptionStops.Clear();
+        _stepInTargets.Clear();
         _returnValue = null;
         _implicitEvalTimedOut = false;
         ReleaseStrongHandles();
@@ -1060,6 +1078,7 @@ public sealed partial class DebugEngine : IDisposable
             if (_process == null || !_stopped)
                 return;
             ClearAsyncStep();
+            ClearStepInTarget();
             ResumeProcess(_process);
         }
     }

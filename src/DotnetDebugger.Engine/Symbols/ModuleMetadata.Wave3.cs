@@ -99,7 +99,8 @@ internal sealed partial class ModuleMetadata
     public bool SymbolsAreForeign { get; private set; }
 
     /// <summary>Adopts symbols located after the module was opened. False if they do not belong to this module.</summary>
-    public bool AttachSymbols(MetadataReaderProvider provider, bool foreign)
+    /// <param name="path">The file the symbols were read from.</param>
+    public bool AttachSymbols(MetadataReaderProvider provider, bool foreign, string? path = null)
     {
         MetadataReader reader = provider.GetMetadataReader();
         if (GetPdbIdentity() is not { } identity || reader.DebugMetadataHeader == null
@@ -115,6 +116,7 @@ internal sealed partial class ModuleMetadata
             _pdb = reader;
             _pointsByDocument = null;
             SymbolsAreForeign = foreign;
+            SymbolPath = path ?? Path;
         }
         return true;
     }

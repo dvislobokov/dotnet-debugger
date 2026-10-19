@@ -46,6 +46,27 @@ public class LaunchTests
         Assert.DoesNotContain("echo:", client.Output("stdout"));
     }
 
+    // Windows: the console of a program started in the client's terminal is the terminal's. Its code page is the OEM
+    // one, so the program would lose everything that is not ASCII before it even reaches the terminal. The debugger
+    // switches that console to UTF-8 itself, as it does for a program with a hidden console; the client has nothing
+    // to do (it used to have to run "dotnet-debugger --console-utf8 <pid>" itself).
+    [WindowsTheory]
+    [InlineData(true)]
+    [InlineData(false)]
+    public void RunInTerminalOutputThatIsNotAsciiArrivesIntact(bool terminalHasConsole)
+    {
+        using var client = new DapClient { TerminalHasConsole = terminalHasConsole };
+        client.Initialize(supportsRunInTerminal: true);
+        client.Request("launch", new { program = TestPaths.TestAppDll, args = new[] { "unicodeOutput", "ünï Жук" }, console = "integratedTerminal" });
+        client.Request("configurationDone");
+        TerminalSession terminal = client.WaitForTerminal();
+
+        Assert.Equal(3, client.WaitForEvent("exited").GetBody<ExitedEventBody>()!.ExitCode);
+        terminal.WaitForOutput("Кириллица и emoji 🙂 €");
+        terminal.WaitForOutput("arg: ünï Жук");
+        Assert.True(terminal.Process.WaitForExit(10000));
+    }
+
     [Fact]
     public void TerminalLaunchIsKilledOnDisconnect()
     {

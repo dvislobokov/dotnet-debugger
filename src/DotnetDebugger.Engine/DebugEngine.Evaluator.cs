@@ -200,6 +200,8 @@ public sealed partial class DebugEngine
                     return _values.Describe(name, remote.Getter, name, _context, options);
                 case TypeOperand type:
                     throw new DebuggerException($"'{type.Metadata.GetTypeName(type.Token)}' is a type, which is not valid in the given context.");
+                case LambdaOperand lambda:
+                    throw new DebuggerException($"The lambda '{lambda.Text}' has no value by itself: pass it to a LINQ method, e.g. list.Where({lambda.Text}).");
                 default:
                     throw new DebuggerException($"The name '{((NamespaceOperand)operand).Name}' does not exist in the current context.");
             }
@@ -253,6 +255,8 @@ public sealed partial class DebugEngine
                     return ToHost(Eval(ternary.Condition)) is true ? Eval(ternary.WhenTrue) : Eval(ternary.WhenFalse);
                 case BinaryExpressionSyntax binary:
                     return Binary(binary);
+                case AnonymousFunctionExpressionSyntax lambda:
+                    return Lambda(lambda);
                 default:
                     return EvalExtended(node) ?? throw new DebuggerException($"Expressions of kind '{node.Kind()}' are not supported.");
             }
@@ -264,6 +268,8 @@ public sealed partial class DebugEngine
 
         private Operand Identifier(string name)
         {
+            if (LambdaParameter(name) is { } parameter)
+                return parameter;
             foreach ((string localName, Func<CorDebugValue?> getter) in Locals)
                 if (localName == name)
                     return new RemoteOperand(getter, IsLocation: true, TupleNames.GetValueOrDefault(name));
@@ -682,6 +688,8 @@ public sealed partial class DebugEngine
             if (!allowCalls)
                 throw new DebuggerException("Method calls are not evaluated in this context.");
             List<Operand> arguments = node.ArgumentList.Arguments.Select(a => Eval(a.Expression)).ToList();
+            if (arguments.Any(a => a is LambdaOperand))
+                return InvokeWithLambda(node, arguments);
 
             // Method<T>(...): the type arguments are given instead of inferred
             if (node.Expression is MemberAccessExpressionSyntax { Name: GenericNameSyntax genericMethod } genericCall)

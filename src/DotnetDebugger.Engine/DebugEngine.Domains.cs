@@ -1,5 +1,6 @@
 using System.Diagnostics.CodeAnalysis;
 using ClrDebug;
+using DotnetDebugger.Engine.Symbols;
 using DotnetDebugger.Engine.Values;
 
 namespace DotnetDebugger.Engine;
@@ -116,7 +117,14 @@ public sealed partial class DebugEngine
         if (refresh && appDomainId != DefaultAppDomainId)
             module.AppDomainName = AppDomainNameOf(module.Module, appDomainId) ?? module.AppDomainName;
         string domain = appDomainId == DefaultAppDomainId ? "" : $" [{module.AppDomainName ?? "AppDomain " + appDomainId}]";
-        return new(module.Id, Path.GetFileName(module.Path) + domain, module.Path, module.Metadata?.HasSymbols == true);
+        ModuleMetadata? metadata = module.Metadata;
+        return new(module.Id, Path.GetFileName(module.Path) + domain, module.Path, metadata?.HasSymbols == true)
+        {
+            Version = metadata?.AssemblyVersion,
+            SymbolFilePath = metadata?.SymbolPath,
+            IsOptimized = !module.OptimizationsDisabled,
+            IsUserCode = module.IsUserCode,
+        };
     }
 
     /// <summary>The AppDomain the code of a frame runs in.</summary>

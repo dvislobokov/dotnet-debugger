@@ -215,6 +215,45 @@ public class IntelliJClientTests
         Assert.NotEqual(0, client.WaitForEvent("exited").GetBody<ExitedEventBody>()!.ExitCode);
     }
 
+    // ---------------------------------------------------------------- H. modules
+
+    /// <summary>
+    /// The Modules tool window shows more than name and path: the assembly version, whether the code is optimized,
+    /// whether it is "my code" and where the symbols came from. The first "module" event already carries all of it.
+    /// </summary>
+    [Fact]
+    public void ModuleEventsAndTheModulesRequestDescribeVersionOptimizationUserCodeAndSymbols()
+    {
+        using var client = new DapClient();
+        client.Initialize();
+        client.Launch("basic");
+        client.SetBreakpoints("locals");
+        client.Request("configurationDone");
+        client.WaitForStop("breakpoint");
+
+        Module FromEvent(string name) => client.WaitForEvent("module", e => e.GetBody<ModuleEventBody>()!.Module.Name == name).GetBody<ModuleEventBody>()!.Module;
+        Module app = FromEvent("TestApp.dll");
+        Assert.Equal(typeof(IntelliJClientTests).Assembly.GetName().Version!.ToString(), app.Version); // one version for everything (Directory.Build.props)
+        Assert.False(app.IsOptimized);
+        Assert.True(app.IsUserCode);
+        Assert.Equal("Symbols loaded.", app.SymbolStatus);
+        Assert.Equal(Path.ChangeExtension(TestPaths.TestAppDll, ".pdb"), app.SymbolFilePath);
+
+        Module coreLib = FromEvent("System.Private.CoreLib.dll");
+        Assert.Matches(@"^\d+\.\d+\.\d+\.\d+$", coreLib.Version);
+        Assert.True(coreLib.IsOptimized);
+        Assert.False(coreLib.IsUserCode);
+        Assert.Equal("Skipped loading symbols.", coreLib.SymbolStatus);
+        Assert.Null(coreLib.SymbolFilePath);
+
+        Module[] modules = client.Request<ModulesResponseBody>("modules").Modules;
+        Module appAgain = modules.Single(m => m.Name == "TestApp.dll");
+        Assert.Equal(app.Id, appAgain.Id);
+        Assert.Equal((app.Version, app.IsOptimized, app.IsUserCode, app.SymbolFilePath), (appAgain.Version, appAgain.IsOptimized, appAgain.IsUserCode, appAgain.SymbolFilePath));
+        Module coreLibAgain = modules.Single(m => m.Name == "System.Private.CoreLib.dll");
+        Assert.Equal((coreLib.Version, true, false, (string?)null), (coreLibAgain.Version, coreLibAgain.IsOptimized, coreLibAgain.IsUserCode, coreLibAgain.SymbolFilePath));
+    }
+
     /// <summary>Requests that imply "the program runs" are not followed by a "continued" event (the specification asks for that).</summary>
     [Fact]
     public void ContinuedIsNotSentForRequestsThatImplyIt()

@@ -101,7 +101,7 @@ public class Wave3Tests
 
         // code whose symbols come from a directory the user pointed to is the user's code
         (threadId, top) = client.StepAndWait("stepOut", threadId);
-        Assert.Equal("SymbolApp.Program.Main()", top.Name);
+        Assert.Equal("SymbolApp.Program.Run()", top.Name);
     }
 
     [Fact]
@@ -116,9 +116,9 @@ public class Wave3Tests
         client.Request("configurationDone");
 
         var (threadId, top) = client.Top(client.WaitForStop("breakpoint"));
-        Assert.Equal("SymbolApp.Program.Main()", top.Name);
+        Assert.Equal("SymbolApp.Program.Run()", top.Name);
         (threadId, top) = client.StepAndWait("stepIn", threadId); // nothing to step into
-        Assert.Equal("SymbolApp.Program.Main()", top.Name);
+        Assert.Equal("SymbolApp.Program.Run()", top.Name);
         Assert.False(unbound.Verified);
     }
 

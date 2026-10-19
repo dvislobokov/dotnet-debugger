@@ -29,13 +29,56 @@ internal sealed partial class ModuleMetadata : IDisposable
     public string Path { get; }
     public bool HasSymbols => _pdb != null;
 
-    private ModuleMetadata(string path, PEReader pe, MetadataReaderProvider? pdbProvider)
+    /// <summary>Where the symbols came from: a .pdb file, or the module itself when they are embedded. Null without symbols.</summary>
+    public string? SymbolPath { get; private set; }
+
+    private ModuleMetadata(string path, PEReader pe, MetadataReaderProvider? pdbProvider, string? symbolPath)
     {
         Path = path;
         _pe = pe;
         _md = pe.GetMetadataReader();
         _pdbProvider = pdbProvider;
         _pdb = pdbProvider?.GetMetadataReader();
+        SymbolPath = _pdb == null ? null : symbolPath ?? path;
+    }
+
+    /// <summary>The version of the assembly the module belongs to ("1.2.3.0"); null for a module that is not an assembly.</summary>
+    public string? AssemblyVersion => _md.IsAssembly ? _md.GetAssemblyDefinition().Version.ToString() : null;
+
+    /// <summary>
+    /// [assembly: Debuggable(DebuggingModes.DisableOptimizations)]: what a Debug build carries. Without it the JIT
+    /// optimizes the code unless the debugger tells it not to.
+    /// </summary>
+    public bool OptimizationsDisabledByAttribute
+    {
+        get
+        {
+            try
+            {
+                if (!_md.IsAssembly || FindAttribute(_md.GetAssemblyDefinition().GetCustomAttributes(), "System.Diagnostics.DebuggableAttribute") is not { } attribute)
+                    return false;
+                BlobReader reader = _md.GetBlobReader(attribute.Value);
+                if (reader.ReadUInt16() != 1)
+                    return false;
+                // Debuggable(DebuggingModes modes) or Debuggable(bool isJITTrackingEnabled, bool isJITOptimizerDisabled)
+                BlobHandle signature = attribute.Constructor.Kind == HandleKind.MemberReference
+                    ? _md.GetMemberReference((MemberReferenceHandle)attribute.Constructor).Signature
+                    : _md.GetMethodDefinition((MethodDefinitionHandle)attribute.Constructor).Signature;
+                BlobReader signatureReader = _md.GetBlobReader(signature);
+                signatureReader.ReadSignatureHeader();
+                int parameters = signatureReader.ReadCompressedInteger();
+                return parameters switch
+                {
+                    1 => (reader.ReadInt32() & 0x100) != 0, // DebuggingModes.DisableOptimizations
+                    2 => reader.ReadBoolean() | reader.ReadBoolean(),
+                    _ => false,
+                };
+            }
+            catch (BadImageFormatException)
+            {
+                return false;
+            }
+        }
     }
 
     public static ModuleMetadata? TryOpen(string path, Action<string>? log = null)
@@ -53,16 +96,17 @@ internal sealed partial class ModuleMetadata : IDisposable
             }
 
             MetadataReaderProvider? pdb = null;
+            string? pdbPath = null;
             try
             {
-                pe.TryOpenAssociatedPortablePdb(path, p => File.Exists(p) ? File.OpenRead(p) : null, out pdb, out _);
+                pe.TryOpenAssociatedPortablePdb(path, p => File.Exists(p) ? File.OpenRead(p) : null, out pdb, out pdbPath);
             }
             catch (Exception e) when (e is IOException or BadImageFormatException or UnauthorizedAccessException)
             {
                 // Unreadable files simply mean "no symbols".
             }
-            pdb ??= WindowsPdb.TryOpenAssociated(pe, path, log);
-            return new ModuleMetadata(path, pe, pdb);
+            pdb ??= WindowsPdb.TryOpenAssociated(pe, path, log, out pdbPath);
+            return new ModuleMetadata(path, pe, pdb, pdbPath);
         }
         catch (Exception e) when (e is IOException or BadImageFormatException or UnauthorizedAccessException)
         {
@@ -89,15 +133,16 @@ internal sealed partial class ModuleMetadata : IDisposable
             }
 
             MetadataReaderProvider? pdb = null;
+            string? pdbPath = null;
             try
             {
-                pe.TryOpenAssociatedPortablePdb(nominalPath, p => File.Exists(p) ? File.OpenRead(p) : null, out pdb, out _);
+                pe.TryOpenAssociatedPortablePdb(nominalPath, p => File.Exists(p) ? File.OpenRead(p) : null, out pdb, out pdbPath);
             }
             catch (Exception e) when (e is IOException or BadImageFormatException or UnauthorizedAccessException or ArgumentException)
             {
             }
-            pdb ??= WindowsPdb.TryOpenAssociated(pe, nominalPath, log);
-            return new ModuleMetadata(nominalPath, pe, pdb);
+            pdb ??= WindowsPdb.TryOpenAssociated(pe, nominalPath, log, out pdbPath);
+            return new ModuleMetadata(nominalPath, pe, pdb, pdbPath);
         }
         catch (Exception e) when (e is IOException or BadImageFormatException or InvalidOperationException)
         {
@@ -348,6 +393,13 @@ internal sealed partial class ModuleMetadata : IDisposable
             result = StripArity(result);
         }
         return result + "." + prettyName;
+    }
+
+    /// <summary>The name of a method as the user wrote it: "Local" for the local function "&lt;Run&gt;g__Local|0_1", ordinary names unchanged.</summary>
+    public static string PrettifyMethodName(string name)
+    {
+        string pretty = PrettifyGeneratedName(name);
+        return pretty[(pretty.LastIndexOf('.') + 1)..];
     }
 
     // <Run>b__0_1 -> Run.AnonymousMethod__0_1;  <Run>g__Local|0_1 -> Run.Local;

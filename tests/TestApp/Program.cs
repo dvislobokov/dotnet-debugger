@@ -50,6 +50,12 @@ public static class Program
             case "stepFilters":
                 StepFilters.Run();
                 break;
+            case "stepInto":
+                StepInto.Run();
+                break;
+            case "lambdas":
+                Lambdas.Run();
+                break;
             case "userUnhandled":
                 UserUnhandled();
                 break;

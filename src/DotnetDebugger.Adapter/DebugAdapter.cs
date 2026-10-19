@@ -208,6 +208,7 @@ internal sealed class DebugAdapter : IDisposable
                     SupportsGotoTargetsRequest = true,
                     SupportsRestartRequest = true,
                     SupportsExceptionFilterOptions = true,
+                    SupportsStepInTargetsRequest = true,
                     ExceptionBreakpointFilters =
                     [
                         Filter(DebugEngine.FilterAll, "All Exceptions", "Break when an exception is thrown.", false),
@@ -480,8 +481,28 @@ internal sealed class DebugAdapter : IDisposable
                 return null;
 
             case "stepIn":
-                _engine.Step(request.GetArguments<ThreadArguments>()!.ThreadId, StepKind.In);
+            {
+                var args = request.GetArguments<StepInArguments>()!;
+                _engine.Step(args.ThreadId, StepKind.In, args.TargetId);
                 return null;
+            }
+
+            case "stepInTargets":
+            {
+                var args = request.GetArguments<StepInTargetsArguments>()!;
+                return new StepInTargetsResponseBody
+                {
+                    Targets = _engine.GetStepInTargets(args.FrameId).Select(t => new StepInTarget
+                    {
+                        Id = t.Id,
+                        Label = t.Label,
+                        Line = LineToClient(t.Line),
+                        Column = t.Column > 0 ? ColumnToClient(t.Column) : null,
+                        EndLine = t.Column > 0 ? LineToClient(t.EndLine) : null,
+                        EndColumn = t.EndColumn > 0 ? ColumnToClient(t.EndColumn) : null,
+                    }).ToArray(),
+                };
+            }
 
             case "stepOut":
                 _engine.Step(request.GetArguments<ThreadArguments>()!.ThreadId, StepKind.Out);
@@ -586,7 +607,11 @@ internal sealed class DebugAdapter : IDisposable
         Id = module.Id,
         Name = module.Name,
         Path = module.Path,
+        Version = module.Version,
+        IsOptimized = module.IsOptimized,
+        IsUserCode = module.IsUserCode,
         SymbolStatus = module.HasSymbols ? "Symbols loaded." : "Skipped loading symbols.",
+        SymbolFilePath = module.SymbolFilePath,
     };
 
     private void SendProcessEvent(string name, string startMethod) => _connection.SendEvent("process", new ProcessEventBody

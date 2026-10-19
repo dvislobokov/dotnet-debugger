@@ -13,6 +13,9 @@ namespace DotnetDebugger.Engine.Launch;
 /// A process can only be attached to one console, and this one has its own (the terminal it was started from, or a
 /// hidden one): a short-lived helper process does the switching instead, this executable run with
 /// <see cref="HelperOption"/>.
+///
+/// A program started in the client's terminal (runInTerminal) gets the same treatment: its console is the terminal's,
+/// which ends up in UTF-8 as if the user had run "chcp 65001" there. So the client need not do that itself.
 /// </summary>
 public static class ConsoleCodePage
 {

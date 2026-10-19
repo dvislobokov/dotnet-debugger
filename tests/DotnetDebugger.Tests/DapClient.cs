@@ -421,6 +421,9 @@ internal sealed class TerminalSession : IDisposable
             RedirectStandardInput = true,
             RedirectStandardOutput = true,
             RedirectStandardError = true,
+            // what a terminal does with the bytes a program writes: UTF-8, whatever the console's code page
+            StandardOutputEncoding = Encoding.UTF8,
+            StandardErrorEncoding = Encoding.UTF8,
             UseShellExecute = false,
             WorkingDirectory = request.Cwd ?? "",
             CreateNoWindow = hasConsole, // a console without a window; otherwise the one of the test run, if any

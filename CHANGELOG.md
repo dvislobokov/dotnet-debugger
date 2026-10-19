@@ -3,6 +3,35 @@
 All notable changes to this project are documented here. Versions follow [SemVer](https://semver.org); the adapter,
 the .NET tool and the VS Code extension share one version number.
 
+## 0.3.0 — unreleased
+
+Lambdas in expressions, smart step into, function breakpoints in library code, richer module information.
+
+- Lambdas as arguments of LINQ methods in Watch, Debug Console, conditions and logpoints (`LambdaEvaluationTests`):
+  `Where`, `Select`, `Any`, `All`, `Count`, `First`/`Last`/`Single` (`OrDefault`), `Sum`, `Min`, `Max`, `Average`,
+  `OrderBy`, `OrderByDescending`, `TakeWhile`, `SkipWhile`. The sequence is enumerated in the debuggee, the lambda is
+  interpreted by the debugger for every element (locals, parameters and members of the frame are captured), and the
+  rest of the expression goes on in the debuggee (`people.Where(p => p.Age > 30).Select(p => p.Name).Count()`).
+  Expression-bodied and `{ return ...; }` lambdas, anonymous methods, `(x, i)` with the index; at most 10 000 elements.
+  `System.Linq` is loaded into the debuggee when the program has not used it yet.
+- Smart step into (`stepInTargets`, `stepIn` with `targetId`; `StepInTargetsTests`): the calls of the current
+  statement, in the order they are made (methods, constructors, property getters, delegate invocations, the lambdas
+  the statement passes on), each with its label and column range; a step aimed at one of them enters it and no other.
+- Function breakpoints (`FunctionBreakpointTests`) bind in modules without symbols (at the first instruction of the
+  method; with `justMyCode` on the breakpoint stays unverified and its message says why), match overloads, generic
+  methods with or without type arguments (`Describe<int>`), nested types (`Outer.Inner.Run`, `Outer+Inner.Run`), and
+  bind when the assembly loads later. The lookup is indexed per module.
+- `module` events and the `modules` request carry the assembly version, whether the code is optimized, whether it is
+  "my code" and the path of the symbol file (`IntelliJClientTests`).
+
+Fixes:
+
+- `new T[n]`, `new[] { ... }` and sequence results of lambdas for struct element types (`DateTime`, `KeyValuePair<,>`,
+  user structs): the runtime refuses to allocate such arrays for the debugger, so the debuggee allocates them through
+  `GC.AllocateArray<T>`.
+- Windows: output that is not ASCII from a program started in the client's terminal (`integratedTerminal`,
+  `externalTerminal`) arrives intact: the debugger switches that console to UTF-8 itself (`LaunchTests`).
+
 ## 0.2.0 — 2026-10-05
 
 .NET Framework 4.x on Windows (regression tests: `FrameworkTests`, `FrameworkLaunchTests`, `FrameworkDomainsTests`,

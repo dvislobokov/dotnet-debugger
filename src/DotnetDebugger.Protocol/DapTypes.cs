@@ -37,6 +37,7 @@ public sealed class Capabilities
     public bool SupportsGotoTargetsRequest { get; set; }
     public bool SupportsRestartRequest { get; set; }
     public bool SupportsExceptionFilterOptions { get; set; }
+    public bool SupportsStepInTargetsRequest { get; set; }
     public ExceptionBreakpointsFilter[]? ExceptionBreakpointFilters { get; set; }
 }
 
@@ -309,6 +310,32 @@ public sealed class ThreadArguments
     public int ThreadId { get; set; }
 }
 
+public sealed class StepInArguments
+{
+    public int ThreadId { get; set; }
+    public int? TargetId { get; set; }
+}
+
+public sealed class StepInTargetsArguments
+{
+    public int FrameId { get; set; }
+}
+
+public sealed class StepInTarget
+{
+    public int Id { get; set; }
+    public string Label { get; set; } = "";
+    public int? Line { get; set; }
+    public int? Column { get; set; }
+    public int? EndLine { get; set; }
+    public int? EndColumn { get; set; }
+}
+
+public sealed class StepInTargetsResponseBody
+{
+    public StepInTarget[] Targets { get; set; } = [];
+}
+
 public sealed class ContinueResponseBody
 {
     public bool AllThreadsContinued { get; set; } = true;
@@ -498,7 +525,11 @@ public sealed class Module
     public int Id { get; set; }
     public string Name { get; set; } = "";
     public string? Path { get; set; }
+    public bool? IsOptimized { get; set; }
+    public bool? IsUserCode { get; set; }
+    public string? Version { get; set; }
     public string? SymbolStatus { get; set; }
+    public string? SymbolFilePath { get; set; }
 }
 
 public sealed class ModuleEventBody

@@ -47,13 +47,19 @@ public sealed partial class DebugEngine
         public string? Invalid { get; init; }
         public List<CodeLocation> Bound { get; } = [];
 
+        /// <summary>A function breakpoint: modules without symbols that have the function, where Just My Code forbids stopping.</summary>
+        public HashSet<string> ExternalModules { get; } = [];
+
         public bool Verified => Bound.Count > 0;
         public bool NeedsEvaluation => Condition != null || LogMessage != null;
 
         public BreakpointInfo ToInfo() => new(Id, Path, Verified, Resolved?.Line ?? RequestedLine,
             Resolved?.Column ?? RequestedColumn, Resolved?.EndLine, Resolved?.EndColumn,
             Verified ? Warning : Invalid ?? (FunctionName != null
-                ? $"No loaded module with symbols contains a function named '{FunctionName}'."
+                ? ExternalModules.Count > 0
+                    ? $"'{FunctionName}' is only found in {string.Join(", ", ExternalModules.Order())}, which has no symbols: with Just My Code the debugger "
+                      + "does not stop in such code. Launch or attach with \"justMyCode\": false to stop there."
+                    : $"No loaded module contains a function named '{FunctionName}'."
                 : "No loaded module with symbols contains code for this location."));
     }
 
@@ -158,20 +164,28 @@ public sealed partial class DebugEngine
 
     private bool TryBind(UserBreakpoint bp, LoadedModule module)
     {
-        if (module.Metadata is not { HasSymbols: true } metadata || bp.Invalid != null)
+        if (module.Metadata is not { } metadata || bp.Invalid != null)
             return false;
         try
         {
             if (bp.FunctionName != null)
             {
-                bool any = false;
-                foreach ((int token, int offset) in metadata.FindMethodsByName(bp.FunctionName))
+                // A function of a module without symbols can be stopped in (at its first instruction), but with Just
+                // My Code the user asked not to be: the breakpoint stays unbound and says why.
+                List<(int MethodToken, int ILOffset)> methods = metadata.FindMethodsByName(bp.FunctionName);
+                if (methods.Count == 0)
+                    return false;
+                if (!metadata.HasSymbols && _justMyCode)
                 {
-                    bp.Bound.Add(AcquireNativeBreakpoint(module, token, offset));
-                    any = true;
+                    bp.ExternalModules.Add(Path.GetFileName(module.Path));
+                    return false;
                 }
-                return any;
+                foreach ((int token, int offset) in methods)
+                    bp.Bound.Add(AcquireNativeBreakpoint(module, token, offset));
+                return true;
             }
+            if (!metadata.HasSymbols)
+                return false;
 
             string pdbPath = ToPdbPath(bp.Path!);
             if (metadata.ResolveBreakpoint(pdbPath, bp.RequestedLine, bp.RequestedColumn) is not { } resolved)
@@ -255,6 +269,11 @@ public sealed partial class DebugEngine
 
         if (OnAsyncStepBreakpoint(thread, location) is { } asyncAction)
             return asyncAction;
+        if (OnStepInTargetBreakpoint(location))
+        {
+            Post(() => Stopped?.Invoke(new StopInfo("step", threadId)));
+            return EventAction.Stop;
+        }
 
         bool isEntry = _entryBreakpoint == location;
         if (isEntry)

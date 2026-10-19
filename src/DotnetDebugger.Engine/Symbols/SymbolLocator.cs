@@ -41,9 +41,9 @@ internal sealed class SymbolLocator
     }
 
     /// <param name="allowServers">Whether slow sources (http) may be asked; directories and the cache always are.</param>
-    /// <returns>The PDB and whether it is "foreign" (from a cache or server rather than a directory the user named).</returns>
+    /// <returns>The PDB, its path and whether it is "foreign" (from a cache or server rather than a directory the user named).</returns>
     /// <param name="includePublicServers">Also ask the Microsoft and NuGet.org servers even if the options do not name them.</param>
-    public (MetadataReaderProvider Provider, bool Foreign)? Find(ModuleMetadata module, bool allowServers, bool includePublicServers = false)
+    public (MetadataReaderProvider Provider, bool Foreign, string Path)? Find(ModuleMetadata module, bool allowServers, bool includePublicServers = false)
     {
         if (module.GetPdbIdentity() is not { } identity)
             return null;
@@ -54,13 +54,13 @@ internal sealed class SymbolLocator
             foreach (string candidate in new[] { Path.Combine(directory, key), Path.Combine(directory, identity.FileName) })
             {
                 if (TryOpen(candidate, module) is { } provider)
-                    return (provider, false);
+                    return (provider, false, candidate);
             }
         }
 
         string cached = Path.Combine(_cache, key);
         if (TryOpen(cached, module) is { } fromCache)
-            return (fromCache, true);
+            return (fromCache, true, cached);
 
         if (!allowServers || (!includePublicServers && _notOnServers.Contains(key)))
             return null;
@@ -74,7 +74,7 @@ internal sealed class SymbolLocator
         foreach (string server in servers)
         {
             if (Download(server.TrimEnd('/') + "/" + key.Replace('\\', '/').ToLowerInvariant(), cached) && TryOpen(cached, module) is { } downloaded)
-                return (downloaded, true);
+                return (downloaded, true, cached);
         }
         _notOnServers.Add(key); // do not ask again during this session
         return null;

@@ -36,16 +36,20 @@ public sealed partial class DebugEngine
     private string? _stepOriginMethod;
     private AsyncStep? _asyncStep;
 
-    public void Step(int threadId, StepKind kind)
+    /// <param name="targetId">For a step in: which call of the current statement to enter (see <see cref="GetStepInTargets"/>).</param>
+    public void Step(int threadId, StepKind kind, int? targetId = null)
     {
         lock (_lock)
         {
             CorDebugProcess process = RequireStopped();
             CorDebugThread thread = RequireThread(threadId);
             ClearAsyncStep();
+            ClearStepInTarget();
             _leavingFilteredMethod = false;
             _stepOriginMethod = GetMethodName(thread.ActiveFrame);
             ClearReturnSites();
+            if (targetId != null && kind == StepKind.In)
+                kind = ArmStepInTarget(thread, targetId.Value);
 
             // Stepping out of an async method means waiting for whoever awaits it, not for the (framework) caller.
             if (kind == StepKind.Out && ArmAsyncStepOut(thread))
@@ -127,6 +131,9 @@ public sealed partial class DebugEngine
             ModuleMetadata? metadata = GetMetadata(function.Module);
             Log?.Invoke($"Step complete ({e.Reason}) in {GetMethodName(frame)} at IL offset {frame.IP.pnOffset} ({frame.IP.pMappingResult})");
 
+            bool hidden = false;
+            SourceLocation? location = metadata?.GetSourceLocation((int)function.Token.Value, frame.IP.pnOffset, out hidden);
+            bool arrivedAtTarget = false;
             try
             {
                 // Step filtering: "step in" does not stop in property accessors and operators. Entering one means
@@ -137,7 +144,27 @@ public sealed partial class DebugEngine
                     StartStep(thread, StepKind.In);
                     return EventAction.Continue;
                 }
-                if (_stepFiltering && _activeStepKind == StepKind.In && e.Reason == CorDebugStepReason.STEP_CALL
+                // A step in aimed at one call of the statement: any other call it enters is left again, and the step
+                // in goes on from the call site. The statement ending without the call means the call is not made.
+                // Code without lines (the constructor of a state machine, a closure) is passed through as usual below.
+                if (_activeStepInTarget is { } target && (location != null || e.Reason != CorDebugStepReason.STEP_CALL))
+                {
+                    if (e.Reason == CorDebugStepReason.STEP_CALL && !IsStepInTargetCall(frame, target))
+                    {
+                        StartStep(thread, StepKind.Out);
+                        _leavingFilteredMethod = true;
+                        return EventAction.Continue;
+                    }
+                    // back in the statement after code without lines (an implicit constructor): the target is still ahead
+                    if (e.Reason == CorDebugStepReason.STEP_RETURN && IsBeforeStepInTarget(frame, target))
+                    {
+                        StartStep(thread, StepKind.In);
+                        return EventAction.Continue;
+                    }
+                    _activeStepInTarget = null;
+                    arrivedAtTarget = e.Reason == CorDebugStepReason.STEP_CALL;
+                }
+                if (_stepFiltering && _activeStepKind == StepKind.In && e.Reason == CorDebugStepReason.STEP_CALL && !arrivedAtTarget
                     && metadata?.IsPropertyOrOperator((int)function.Token.Value) == true)
                 {
                     StartStep(thread, StepKind.Out);
@@ -148,6 +175,7 @@ public sealed partial class DebugEngine
             catch (Exception ex)
             {
                 _leavingFilteredMethod = false;
+                _activeStepInTarget = null;
                 Log?.Invoke("Step filtering failed: " + ex.Message);
             }
 
@@ -158,8 +186,6 @@ public sealed partial class DebugEngine
             //    method is its body: stepping out would only return once the (non-user) kick-off method is done.
             //  - otherwise it is code without symbols: stepping through it would wander off into the framework, so
             //    it is left at once and the step in carries on from the call site.
-            bool hidden = false;
-            SourceLocation? location = metadata?.GetSourceLocation((int)function.Token.Value, frame.IP.pnOffset, out hidden);
             if (location == null)
             {
                 try
@@ -184,6 +210,7 @@ public sealed partial class DebugEngine
 
         if (e.Reason == CorDebugStepReason.STEP_RETURN)
             CaptureReturnValue(thread);
+        ClearStepInTarget();
         Post(() => Stopped?.Invoke(new StopInfo("step", threadId)));
         return EventAction.Stop;
     }

@@ -122,7 +122,7 @@ dap.adapters.coreclr = {
 - запуск по проекту (`project` + `build`), `launchSettings.json`, запуск в терминале клиента (`runInTerminal`) с настоящим stdin
 - `restart` (новый процесс в той же сессии, брейкпоинты сохраняются), `dotnet/info`
 - исходники: `sourceFileMap` (пути из PDB ↔ локальные), встроенные в PDB исходники через запрос `source`, предупреждение, если файл отличается от скомпилированного
-- запросы `modules`, `loadedSources`, `cancel`; `pause`/`terminate`/`disconnect` не ждут очереди запросов
+- запросы `modules` (версия сборки, оптимизация, «мой код», путь к символам), `loadedSources`, `cancel`; `pause`/`terminate`/`disconnect` не ждут очереди запросов
 - события `process`, `thread`, `module`, `exited`, `terminated`; `Debugger.Break()`, `Debug.WriteLine` → `output`
 
 **Брейкпоинты**
@@ -130,13 +130,15 @@ dap.adapters.coreclr = {
 - по колонке — так ставится брейкпоинт внутрь однострочной лямбды (`x => x * factor`)
 - фильтры исключений `all`, `user-unhandled`, `unhandled`, с условиями по типам (`System.IO.*`, `!System.OperationCanceledException`)
 - условные (`condition`), по числу срабатываний (`hitCondition`: `5`, `>=5`, `%5`, ...), logpoints (`logMessage` с `{выражениями}`)
-- на функцию (`setFunctionBreakpoints`): `Method`, `Type.Method`, `Namespace.Type.Method`
+- на функцию (`setFunctionBreakpoints`): `Method`, `Type.Method`, `Namespace.Type.Method`, `Outer.Inner.Method`, `Describe<int>`;
+  все перегрузки; в модулях без символов — при `justMyCode: false` (иначе брейкпоинт остаётся непривязанным и объясняет почему)
 - внутри лямбд, LINQ-предикатов, локальных функций, итераторов, async-методов, generic-методов
 
 **Выполнение**
 - `continue`, `pause`, `next`, `stepIn`, `stepOut` по диапазонам sequence points, с Just My Code
 - step over через `await` остаётся в async-методе (даже если продолжение на другом потоке)
 - step in не проваливается в P/Invoke и в скомпилированные expression trees / динамические методы
+- `stepInTargets` («Step Into Target»): список вызовов текущей строки — методы, конструкторы, геттеры, делегаты, лямбды — и шаг ровно в выбранный
 - `[DebuggerHidden]`, `[DebuggerStepThrough]`, `[DebuggerNonUserCode]`; step in пропускает свойства и операторы (`enableStepFiltering`)
 - step over через `await` следит за своим вызовом async-метода (а не за любым), step out из async-метода приводит в ожидающий его async-метод
 - set next statement (`gotoTargets` / `goto`) в пределах текущего метода
@@ -162,7 +164,11 @@ dap.adapters.coreclr = {
 **Выражения** (`evaluate`: watch, hover, repl; условия брейкпоинтов; logpoints; `setVariable`)
 - литералы, арифметика, сравнения, логика, `?:`, `??`, `?.`, приведения, `is` / `as` (включая интерфейсы)
 - присваивания (`=`, `+=`, `++`, ...), `new T(...) { ... }`, `new T[n]`, `new[] { ... }`, `typeof`, `default`, `nameof`, `sizeof`, `$"интерполяция {x,5:F1}"`
-- методы расширения, включая LINQ без лямбд: `numbers.Sum()`, `list.Distinct().Count()`, `map.First().Value`, свои расширения
+- методы расширения, включая LINQ: `numbers.Sum()`, `list.Distinct().Count()`, `map.First().Value`, свои расширения
+- лямбды в LINQ-методах: `people.Where(p => p.Age > 30).Select(p => p.Name).Count()`, `numbers.Any(x => x > threshold)`,
+  `items.OrderBy(i => i.Key).First()` — лямбда интерпретируется отладчиком над элементами коллекции, захватывает локальные
+  переменные и члены кадра; `Where`, `Select`, `Any`, `All`, `Count`, `First`/`Last`/`Single`(`OrDefault`), `Sum`, `Min`, `Max`,
+  `Average`, `OrderBy`(`Descending`), `TakeWhile`, `SkipWhile`
 - generic-имена типов (`List<int>`, `Comparer<int>.Default`), явные аргументы типа у методов (`Array.Empty<string>()`), явные реализации интерфейсов
 - локальные переменные, `this`, поля, свойства, статические члены, константы, enum-ы, `$exception`
 - индексаторы массивов (в т.ч. многомерных), строк, `List<T>`, `Dictionary<K,V>` и любых типов с `get_Item`
@@ -180,7 +186,8 @@ dap.adapters.coreclr = {
 План развития по вехам — в [ROADMAP.md](ROADMAP.md); что и как уже сделано (волны 1–3) — в [docs/roadmap-done.md](docs/roadmap-done.md).
 
 - Только управляемый код: нативные кадры и шаг внутрь P/Invoke (mixed-mode) не поддерживаются
-- Выражения: нет лямбд (а значит `Where(x => ...)`), `is`-паттернов, `with`, `await`, динамических членов (`ExpandoObject`) —
+- Выражения: лямбды — только как аргументы перечисленных LINQ-методов (с телом-выражением или одним `return`), не в
+  `GroupBy`/`Aggregate`/своих методах; нет `is`-паттернов, `with`, `await`, динамических членов (`ExpandoObject`) —
   до компиляции выражений Roslyn (веха 4.1). Имена элементов кортежей известны только для локальных переменных (они есть
   лишь в PDB); `typeof(T)` в коде, общем для ссылочных типов, берётся из значения параметра типа `T`
 - Вычисления, которые нельзя прервать. Неявные вычисления (`ToString()`, геттеры при раскрытии объекта) ждут 1 с, явные — 5 с,

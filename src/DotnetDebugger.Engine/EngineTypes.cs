@@ -60,7 +60,21 @@ public sealed record ThreadInfo(int Id, string Name);
 public sealed record FrameInfo(int Id, string Name, string? SourcePath, int Line, int Column, int EndLine, int EndColumn, int SourceReference = 0,
     string? PresentationHint = null);
 
-public sealed record ModuleLoadInfo(int Id, string Name, string Path, bool HasSymbols);
+/// <param name="HasSymbols">Symbols are loaded, from wherever.</param>
+public sealed record ModuleLoadInfo(int Id, string Name, string Path, bool HasSymbols)
+{
+    /// <summary>Version of the assembly ("1.0.0.0"); null when the module is not an assembly.</summary>
+    public string? Version { get; init; }
+
+    /// <summary>The .pdb the symbols were read from, or the module itself when they are embedded in it.</summary>
+    public string? SymbolFilePath { get; init; }
+
+    /// <summary>The JIT optimizes the code: no Debug build, and the debugger could not turn optimizations off (attach).</summary>
+    public bool IsOptimized { get; init; }
+
+    /// <summary>"My code" of Just My Code: symbols next to the module (or from a directory the user named), not borrowed from a server.</summary>
+    public bool IsUserCode { get; init; }
+}
 
 /// <param name="BreakMode">Why the debugger stopped: "always" (thrown), "unhandled" or "userUnhandled".</param>
 public sealed record ExceptionData(string TypeName, string? Message, string BreakMode, string? StackTrace = null, ExceptionData? Inner = null);

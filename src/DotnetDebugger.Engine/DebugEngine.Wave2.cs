@@ -53,7 +53,9 @@ public sealed partial class DebugEngine
     Func<CorDebugValue?> IEvalHost.EnumerateToArray(Func<CorDebugValue?> sequence, InspectionContext context)
     {
         // Enumerable.ToArray(Enumerable.Cast<object>(sequence)): works for any IEnumerable without knowing its element type
-        var enumerable = FindType("System.Linq.Enumerable", AppDomainOf(context)) ?? throw new DebuggerException("System.Linq is not loaded in the debuggee.");
+        var enumerable = FindType("System.Linq.Enumerable", AppDomainOf(context))
+            ?? LoadLinq(context)
+            ?? throw new DebuggerException("System.Linq is not loaded in the debuggee.");
         var objectType = FindType("System.Object", AppDomainOf(context)) ?? throw new DebuggerException("System.Object not found.");
         ICorDebugType[] ofObject = [objectType.Module.Module.GetClassFromToken(new mdTypeDef(objectType.Token)).GetParameterizedType(CorElementType.Class, 0, []).Raw];
 
@@ -66,6 +68,34 @@ public sealed partial class DebugEngine
         Func<CorDebugValue?> casted = Stabilize(() => castResult);
         CorDebugValue? array = RunEval(context.ThreadId, eval => eval.CallParameterizedFunction(toArray.Raw, 1, ofObject, 1, [casted()!.Raw]));
         return Stabilize(() => array);
+    }
+
+    /// <summary>
+    /// A program that has not used LINQ yet has no System.Linq loaded: the debuggee is asked to load it
+    /// (Assembly.Load("System.Linq"), which every runtime ships), so that collections can be enumerated all the same.
+    /// </summary>
+    private (LoadedModule Module, int Token)? LoadLinq(InspectionContext context)
+    {
+        int appDomainId = AppDomainOf(context);
+        if (FindType("System.Reflection.Assembly", appDomainId) is not { } assembly || assembly.Module.Metadata == null)
+            return null;
+        MethodDescription? load = assembly.Module.Metadata.GetMethods(assembly.Token, "Load")
+            .FirstOrDefault(m => m.IsStatic && m.ParameterTypes is ["System.String"]);
+        if (load == null)
+            return null;
+        CorDebugFunction function = assembly.Module.Module.GetFunctionFromToken(new mdMethodDef(load.Token));
+        try
+        {
+            CorDebugValue? name = RunEval(context.ThreadId, eval => eval.NewString("System.Linq"));
+            Func<CorDebugValue?> nameHandle = Stabilize(() => name);
+            RunEval(context.ThreadId, eval => eval.CallFunction(function.Raw, 1, [nameHandle()!.Raw]));
+        }
+        catch (Exception e) when (e is DebuggerException or EvalFailedException)
+        {
+            Log?.Invoke("System.Linq could not be loaded into the debuggee: " + e.Message);
+            return null;
+        }
+        return FindType("System.Linq.Enumerable", appDomainId);
     }
 
     byte[] IEvalHost.ReadMemory(ulong address, int size) => RequireProcess().ReadMemory(new CORDB_ADDRESS(address), size);

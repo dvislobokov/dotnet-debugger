@@ -96,8 +96,9 @@ internal static class WindowsPdb
     /// <summary>
     /// Finds and converts the Windows PDB next to the module, or at the path the module was built with. Never throws.
     /// </summary>
-    public static MetadataReaderProvider? TryOpenAssociated(PEReader pe, string peFilePath, Action<string>? log)
+    public static MetadataReaderProvider? TryOpenAssociated(PEReader pe, string peFilePath, Action<string>? log, out string? pdbPath)
     {
+        pdbPath = null;
         try
         {
             if (GetCodeView(pe) is not { } codeView || string.IsNullOrEmpty(codeView.Path))
@@ -116,7 +117,10 @@ internal static class WindowsPdb
                     continue;
                 using FileStream stream = File.OpenRead(candidate);
                 if (IsWindowsPdb(stream))
+                {
+                    pdbPath = candidate;
                     return TryConvert(pe, stream, candidate, log);
+                }
             }
             return null;
         }
